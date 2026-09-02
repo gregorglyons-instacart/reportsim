@@ -503,8 +503,8 @@ function frame(now){
   if(!S.lastReal) S.lastReal=now;
   let realDt=(now-S.lastReal)/1000; S.lastReal=now;
   realDt=Math.min(realDt,0.1);
-  if(S.running){
-    const simDt=realDt*S.speed;
+  const simDt=realDt*S.speed;
+  if(S.running && simDt>0){
     const steps=Math.min(120,Math.max(1,Math.ceil(simDt/0.25)));
     const sub=simDt/steps;
     let arr=0,comp=0;
@@ -623,6 +623,7 @@ function fmtLam(l){
   return `${s}/s · ${d}/d`;
 }
 function fmtRate(r){
+  if(!isFinite(r)||r<=0) return '0/hr';
   if(r>=1) return r.toFixed(1)+'/s';
   if(r*60>=1) return (r*60).toFixed(1)+'/min';
   return (r*3600).toFixed(0)+'/hr';
