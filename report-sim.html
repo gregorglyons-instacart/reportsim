@@ -107,7 +107,7 @@
         <span>Load (reports/s)</span><span class="v num" id="lamV">5.0</span></label>
       <input type="range" id="lam" min="0" max="80" step="0.5" value="5">
     </div>
-    <div class="num" style="color:var(--ink2);font-size:11px">sim&nbsp;<span id="clock">0.0s</span></div>
+    <div class="num" style="color:var(--ink2);font-size:11px">elapsed&nbsp;<span id="clock" style="color:var(--ink)">0.0s</span></div>
   </div>
 
   <!-- LEFT: config -->
@@ -476,7 +476,7 @@ function renderThrottled(now){
   $('kReq').textContent=fmt(S.ctr.req);
   $('kFail').textContent=fmt(S.ctr.fail);
   $('kArr').textContent=fmt(S.ctr.arr);
-  $('clock').textContent=fmtTime(S.t);
+  $('clock').textContent=fmtElapsed(S.t);
 
   // pods
   for(const pod of S.pods){
@@ -502,7 +502,14 @@ function setT(k,v){ const e=document.querySelector(`[data-t="${k}"]`); if(e)e.te
 function setW(k,v){ const e=document.querySelector(`[data-t="${k}"]`); if(e)e.style.width=Math.min(100,v)+'%'; }
 function push(a,v){ a.push(v); if(a.length>HIST_MAX)a.shift(); }
 function fmt(n){ return n>=10000? (n/1000).toFixed(1)+'k': (''+Math.round(n)); }
-function fmtTime(s){ if(s<90)return s.toFixed(1)+'s'; if(s<5400)return (s/60).toFixed(1)+'m'; return (s/3600).toFixed(2)+'h'; }
+function fmtTime(s){ if(s<90)return s.toFixed(1)+'s'; if(s<5400)return (s/60).toFixed(1)+'m'; if(s<86400)return (s/3600).toFixed(2)+'h'; return (s/86400).toFixed(2)+'d'; }
+function fmtElapsed(s){
+  const d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60),sec=Math.floor(s%60);
+  if(d>0)return `${d}d ${h}h ${m}m`;
+  if(h>0)return `${h}h ${m}m ${sec}s`;
+  if(m>0)return `${m}m ${sec}s`;
+  return s.toFixed(1)+'s';
+}
 
 function renderClusterStats(){
   const sched=S.pods.filter(p=>p.sched).length;
