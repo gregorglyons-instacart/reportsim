@@ -544,7 +544,7 @@ function stepSim(dt){
     } else if(r.progress>=1){
       pod.report=null; S.ctr.done++; S.tiers[pod.tier].done++; S.compCount++;
       const wall=S.t-r.arrT; S.lat.n++; S.lat.sum+=wall;
-      if(r.batch) batchDone(r.batch,wall);
+      if(r.batch) batchDone(r.batch,wall,pod.tier);
       if(r.dur>=14400) log(`#${r.id} done — 4h report finished on ${S.tiers[pod.tier].name}`,'g');
     }
   }
@@ -855,7 +855,7 @@ function injectBurst(){
   const dist=$('bDist').value, durMode=$('bDur').value, fixedS=(+$('bDurFixed').value)*60;
   const ti=Math.min(+$('bTier').value||0, S.tiers.length-1);
   const batch={id:++S.batchNo,t0:S.t,count,mn,mx,dist,durMode,tier:ti,
-    done:0,failed:0,oom:0,first:null,last:null,sum:0,max:0,cfg:clusterSnapshot()};
+    done:0,failed:0,oom:0,first:null,last:null,sum:0,max:0,lastTier:null,cfg:clusterSnapshot()};
   S.batches.push(batch);
   for(let i=0;i<count;i++){
     const peak=burstMem(dist,mn,mx);
@@ -878,8 +878,8 @@ function fmtCfg(cfg){
   return `<div>nodes: ${cfg.nodes}× ${node} (${cfg.nodeRam}GB)</div><div>pods: ${pods}</div>`;
 }
 function findBatch(id){ return S.batches.find(b=>b.id===id); }
-function batchDone(id,wall){ const b=findBatch(id); if(!b) return;
-  b.done++; if(b.first===null) b.first=S.t-b.t0; b.last=S.t-b.t0; b.sum+=wall; if(wall>b.max) b.max=wall; }
+function batchDone(id,wall,tier){ const b=findBatch(id); if(!b) return;
+  b.done++; if(b.first===null) b.first=S.t-b.t0; b.last=S.t-b.t0; b.lastTier=tier; b.sum+=wall; if(wall>b.max) b.max=wall; }
 function batchFail(id){ const b=findBatch(id); if(b) b.failed++; }
 function batchOom(id){ const b=findBatch(id); if(b) b.oom++; }
 const BATCH_FIELDS=[['done','done'],['pending','pending'],['failed','failed'],['oom','oom'],
@@ -900,8 +900,9 @@ function renderBatches(){
       <button class="rm" data-batch-x="${b.id}" title="clear batch">×</button>
       <div class="blabel">#${b.id} · ${b.count} rpts<br>
         <span style="color:var(--ink2);font-weight:400">${b.mn.toFixed(1)}–${b.mx.toFixed(1)}GB ${b.dist} → ${tName}</span></div>
-      <div class="bcfg">${fmtCfg(b.cfg)}</div>
-      <div class="bstats">${BATCH_FIELDS.map(([l,k])=>`<div><span>${l}</span><b data-f="${k}">–</b></div>`).join('')}</div>`;
+      <div class="bstats">${BATCH_FIELDS.map(([l,k])=>`<div><span>${l}</span><b data-f="${k}">–</b></div>`).join('')}</div>
+      <div class="bstats"><div><span>final tier</span><b data-f="finaltier">–</b></div></div>
+      <div class="bcfg">${fmtCfg(b.cfg)}</div>`;
     host.appendChild(el);
     const fields={}; el.querySelectorAll('[data-f]').forEach(n=>fields[n.dataset.f]=n);
     batchDom.set(b.id,{el,fields});
@@ -922,6 +923,11 @@ function renderBatches(){
     f.max.textContent=b.max? fmtTime(b.max):'–';
     f.cost.textContent=fmtMoney(elapsed/3600*clusterHr);
     f.prewarm.textContent=fmtMoney(0.5*clusterHr);
+    if(b.lastTier!=null){
+      const cfgT=b.cfg&&b.cfg.tiers[b.lastTier], liveT=S.tiers[b.lastTier];
+      f.finaltier.textContent=cfgT?cfgT.name:(liveT?liveT.name:'T'+(b.lastTier+1));
+      f.finaltier.style.color=TIER_COLORS[b.lastTier]||'';
+    } else { f.finaltier.textContent='–'; f.finaltier.style.color=''; }
   });
 }
 
