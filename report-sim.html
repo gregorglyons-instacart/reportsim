@@ -167,7 +167,7 @@
     <h2 style="margin-top:14px">Memory / time curve
       <span style="text-transform:none;font-weight:400;color:var(--muted)">@ intensity <span id="curveInt">0.30</span></span></h2>
     <table class="curve" id="curve"></table>
-    <div class="hint">Peak GB and ~runtime per report percentile, and the smallest pod tier that fits. Minimum runtime 4s.</div>
+    <div class="hint">Peak GB and ~runtime per report percentile, and the smallest pod tier that fits. Minimum runtime 0.18s.</div>
   </div>
 
   <div class="panel">
@@ -272,7 +272,7 @@
 "use strict";
 // ---------------------------------------------------------------- data
 const BANDS = [
-  {name:'<1s',    pct:63.14, min:0.2,   max:1},
+  {name:'<1s',    pct:63.14, min:0.18,  max:1},
   {name:'1-5s',   pct:35.06, min:1,     max:5},
   {name:'5-30s',  pct:1.55,  min:5,     max:30},
   {name:'30-60s', pct:0.10,  min:30,    max:60},
@@ -332,7 +332,7 @@ function poisson(l){
   do{k++;p*=Math.random();}while(p>L);
   return k-1;
 }
-const MIN_DUR = 4; // seconds — floor on every report's runtime (non-configurable)
+const MIN_DUR = 0.18; // seconds — floor on every report's runtime (non-configurable)
 function sampleDuration(P){
   let d=1;
   for(const b of BANDS){
