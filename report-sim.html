@@ -38,7 +38,7 @@
   button:hover{border-color:#4a545a}
   button.go{background:var(--s);border-color:var(--s);color:#fff}
   button.stop{background:var(--bad);border-color:var(--bad);color:#fff}
-  .tierrow{display:grid;grid-template-columns:1fr 62px 62px;gap:6px;align-items:center;
+  .tierrow{display:grid;grid-template-columns:1fr 56px 56px 22px;gap:6px;align-items:center;
     margin-bottom:6px}
   .tierrow .tag{font-weight:600;font-size:11px;display:flex;align-items:center;gap:5px}
   .dot{width:9px;height:9px;border-radius:2px;display:inline-block}
@@ -53,6 +53,12 @@
 
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .tgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:8px}
+  .rm{padding:2px 0;font-size:13px;line-height:1;background:var(--panel2);border:1px solid var(--line);
+    border-radius:4px;color:var(--ink2);cursor:pointer}
+  .rm:hover:not(:disabled){border-color:var(--bad);color:var(--bad)}
+  .rm:disabled{opacity:.3;cursor:default}
+  #addTier{margin-top:5px;padding:4px 10px;font-size:11px;font-weight:600}
 
   /* nodes */
   #nodes{display:flex;flex-wrap:wrap;gap:8px}
@@ -124,13 +130,14 @@
       <div class="hint" id="nodeHint"></div>
     </div>
 
-    <h2 style="margin-top:14px">Pod tiers</h2>
-    <div style="display:grid;grid-template-columns:1fr 62px 62px;gap:6px;font-size:10px;color:var(--muted);margin-bottom:3px">
-      <span>tier</span><span>RAM GB</span><span>pods</span></div>
+    <h2 style="margin-top:14px">Pod tiers <span style="text-transform:none;font-weight:400;color:var(--muted)">(1–6)</span></h2>
+    <div style="display:grid;grid-template-columns:1fr 56px 56px 22px;gap:6px;font-size:10px;color:var(--muted);margin-bottom:3px">
+      <span>tier</span><span>RAM GB</span><span>pods</span><span></span></div>
     <div id="tiers"></div>
-    <div class="hint">Reports start on the smallest tier. On OOM they are killed and
-      restart from scratch one tier up (all progress lost). Usable RAM per pod =
-      size − 100 MB overhead.</div>
+    <button id="addTier">+ Add tier</button>
+    <div class="hint">Reports start on tier 1 and, on OOM, are killed and restart from
+      scratch on the next tier up (all progress lost). List tiers smallest→largest.
+      Usable RAM per pod = size − 100 MB overhead.</div>
 
     <h2 style="margin-top:14px">Model</h2>
     <div class="ctl">
@@ -171,7 +178,7 @@
       <div id="nodes"></div>
     </div>
 
-    <div class="grid3" style="margin-bottom:10px" id="tierPanels"></div>
+    <div class="tgrid" style="margin-bottom:10px" id="tierPanels"></div>
 
     <div class="grid2">
       <div class="panel">
@@ -183,10 +190,7 @@
       <div class="panel">
         <h2>Queue depth by tier</h2>
         <canvas id="chQ" height="150"></canvas>
-        <div class="legend">
-          <span><span class="dot" style="background:var(--s)"></span>S</span>
-          <span><span class="dot" style="background:var(--m)"></span>M</span>
-          <span><span class="dot" style="background:var(--l)"></span>L</span></div>
+        <div class="legend" id="qLegend"></div>
       </div>
     </div>
 
@@ -238,7 +242,8 @@ const INSTANCES = [
   {name:'Standard_E8as_v7', cls:'memory',          vcore:8,ram:64,hr:0.939,mo:685.47},
   {name:'Standard_F8as_v7', cls:'compute',         vcore:8,ram:16,hr:1.022,mo:746.06},
 ];
-const TIER_COLORS = ['#2a78d6','#eb6834','#1baf7a','#e87ba4'];
+const TIER_COLORS = ['#2a78d6','#eb6834','#1baf7a','#e87ba4','#eda100','#9085e9'];
+const MAX_TIERS = 6;
 
 // ---------------------------------------------------------------- sampling
 function randn(){ // Box-Muller
@@ -295,7 +300,7 @@ const S = {
   running:false, t:0, lastReal:0,
   node:INSTANCES[13],               // E8as_v7 (64GB)
   overhead:0.1, intensity:0.3, lambda:5, speed:60,
-  tierCfg:[{name:'S',ram:2,count:20},{name:'M',ram:8,count:4},{name:'L',ram:32,count:2}],
+  tierCfg:[{name:'T1',ram:2,count:20},{name:'T2',ram:8,count:4},{name:'T3',ram:32,count:2}],
   tiers:[], nodes:[], pods:[],
   ctr:{arr:0,done:0,fail:0,req:0},
   lat:{n:0,sum:0},
@@ -340,7 +345,28 @@ function buildCluster(){
     pod.sched=true;
   }
   S.alloc=alloc; S.unsched=unsched;
-  buildNodeDOM(); buildTierDOM(); renderClusterStats(); renderCurve();
+  while(S.hist.q.length<S.tiers.length) S.hist.q.push([]);
+  S.hist.q.length=S.tiers.length;
+
+  buildNodeDOM(); buildTierDOM(); renderClusterStats(); renderCurve(); renderQLegend();
+}
+function normalizeTierNames(){ S.tierCfg.forEach((c,i)=>c.name='T'+(i+1)); }
+function renderTierConfig(){
+  const tc=$('tiers'); tc.innerHTML='';
+  const canRemove=S.tierCfg.length>1;
+  S.tierCfg.forEach((c,i)=>{
+    const row=document.createElement('div'); row.className='tierrow';
+    row.innerHTML=`<span class="tag"><span class="dot" style="background:${TIER_COLORS[i]}"></span>${c.name}</span>
+      <input type="number" min="0.5" step="0.5" value="${c.ram}" data-tier-ram="${i}">
+      <input type="number" min="0" step="1" value="${c.count}" data-tier-cnt="${i}">
+      <button class="rm" data-tier-rm="${i}" title="remove tier"${canRemove?'':' disabled'}>×</button>`;
+    tc.appendChild(row);
+  });
+  $('addTier').style.display = S.tierCfg.length>=MAX_TIERS? 'none':'';
+}
+function renderQLegend(){
+  const el=$('qLegend'); if(!el) return;
+  el.innerHTML=S.tiers.map(t=>`<span><span class="dot" style="background:${t.color}"></span>${t.name}</span>`).join('');
 }
 
 // ---------------------------------------------------------------- sim step
@@ -500,7 +526,7 @@ function renderThrottled(now){
   if(now-lastHist>150){
     lastHist=now;
     push(S.hist.arr,S.rate.arr); push(S.hist.comp,S.rate.comp);
-    S.tiers.forEach((t,i)=>{ if(i<3) push(S.hist.q[i],t.queue.length); });
+    S.tiers.forEach((t,i)=>{ if(S.hist.q[i]) push(S.hist.q[i],t.queue.length); });
     drawThr(); drawQ();
   }
 }
@@ -569,9 +595,7 @@ function drawLine(cv,series,{max=null,fill=false}={}){
 }
 function drawThr(){ drawLine($('chThr'),[
   {data:S.hist.arr,color:'#9aa4ab'},{data:S.hist.comp,color:'#0ca30c'}]); }
-function drawQ(){ drawLine($('chQ'),[
-  {data:S.hist.q[0],color:'#2a78d6'},{data:S.hist.q[1],color:'#eb6834'},
-  {data:S.hist.q[2],color:'#1baf7a'}]); }
+function drawQ(){ drawLine($('chQ'), S.tiers.map((t,i)=>({data:S.hist.q[i]||[],color:t.color}))); }
 
 // ---------------------------------------------------------------- log
 function log(msg,type){
@@ -589,19 +613,25 @@ function initControls(){
     if(it===S.node)o.selected=true; nodeSel.appendChild(o); });
   nodeSel.onchange=e=>{ S.node=INSTANCES[+e.target.value]; buildCluster(); };
 
+  normalizeTierNames(); renderTierConfig();
   const tc=$('tiers');
-  S.tierCfg.forEach((c,i)=>{
-    const row=document.createElement('div'); row.className='tierrow';
-    row.innerHTML=`<span class="tag"><span class="dot" style="background:${TIER_COLORS[i]}"></span>${c.name}</span>
-      <input type="number" min="0.5" step="0.5" value="${c.ram}" data-tier-ram="${i}">
-      <input type="number" min="0" step="1" value="${c.count}" data-tier-cnt="${i}">`;
-    tc.appendChild(row);
-  });
   tc.oninput=e=>{
     const ri=e.target.getAttribute('data-tier-ram'), ci=e.target.getAttribute('data-tier-cnt');
     if(ri!==null) S.tierCfg[+ri].ram=Math.max(0.5,+e.target.value||0.5);
     if(ci!==null) S.tierCfg[+ci].count=Math.max(0,Math.floor(+e.target.value||0));
     buildCluster();
+  };
+  tc.onclick=e=>{
+    const rm=e.target.getAttribute('data-tier-rm');
+    if(rm!==null && S.tierCfg.length>1){
+      S.tierCfg.splice(+rm,1); normalizeTierNames(); renderTierConfig(); buildCluster();
+    }
+  };
+  $('addTier').onclick=()=>{
+    if(S.tierCfg.length>=MAX_TIERS) return;
+    const maxRam=Math.max(...S.tierCfg.map(c=>c.ram));
+    S.tierCfg.push({name:'',ram:Math.round(maxRam*2),count:1});
+    normalizeTierNames(); renderTierConfig(); buildCluster();
   };
 
   bindSlider('speed','speedV',v=>{S.speed=v;return v+'×';});
