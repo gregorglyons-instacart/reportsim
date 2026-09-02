@@ -871,38 +871,46 @@ function batchDone(id,wall){ const b=findBatch(id); if(!b) return;
   b.done++; if(b.first===null) b.first=S.t-b.t0; b.last=S.t-b.t0; b.sum+=wall; if(wall>b.max) b.max=wall; }
 function batchFail(id){ const b=findBatch(id); if(b) b.failed++; }
 function batchOom(id){ const b=findBatch(id); if(b) b.oom++; }
-function bcell(label,val,color){ return `<div><span>${label}</span><b${color?` style="color:${color}"`:''}>${val}</b></div>`; }
+const BATCH_FIELDS=[['done','done'],['pending','pending'],['failed','failed'],['oom','oom'],
+  ['1st report','first'],['last report','last'],['avg / report','avg'],['max','max'],
+  ['cluster cost','cost'],['pre-warm','prewarm']];
+const batchDom=new Map(); // batch id -> {el, fields}
 function renderBatches(){
   const host=$('batches'); if(!host) return;
   const empty=$('batchEmpty'); if(empty) empty.style.display=S.batches.length?'none':'';
-  host.innerHTML=S.batches.map(b=>{
-    const pending=b.count-b.done-b.failed, complete=(b.done+b.failed>=b.count);
+  // drop DOM for batches that were cleared
+  for(const [id,rec] of [...batchDom]){ if(!S.batches.some(b=>b.id===id)){ rec.el.remove(); batchDom.delete(id); } }
+  // create DOM once for new batches (appended in order)
+  S.batches.forEach(b=>{
+    if(batchDom.has(b.id)) return;
     const tName=S.tiers[b.tier]? S.tiers[b.tier].name : 'T'+(b.tier+1);
-    const first=b.first!=null? fmtTime(b.first):'–';
-    const last=complete&&b.last!=null? fmtTime(b.last) : (pending>0?'running…':'–');
-    const avg=b.done? fmtTime(b.sum/b.done):'–';
-    const elapsed=(complete&&b.last!=null)? b.last : (S.t-b.t0);
-    const clusterHr=S.nodes.length*S.node.hr;
-    const cost=elapsed/3600*clusterHr;
-    const prewarm=0.5*clusterHr; // 30 min of cluster runtime for pod setup
-    return `<div class="batch">
+    const el=document.createElement('div'); el.className='batch';
+    el.innerHTML=`
       <button class="rm" data-batch-x="${b.id}" title="clear batch">×</button>
       <div class="blabel">#${b.id} · ${b.count} rpts<br>
         <span style="color:var(--ink2);font-weight:400">${b.mn.toFixed(1)}–${b.mx.toFixed(1)}GB ${b.dist} → ${tName}</span></div>
-      <div class="bstats">
-        ${bcell('done',b.done)}
-        ${bcell('pending',pending)}
-        ${bcell('failed',b.failed,b.failed?'var(--bad)':'')}
-        ${bcell('oom',b.oom,b.oom?'var(--warn)':'')}
-        ${bcell('1st report',first)}
-        ${bcell('last report',last)}
-        ${bcell('avg / report',avg)}
-        ${bcell('max',b.max?fmtTime(b.max):'–')}
-        ${bcell('cluster cost',fmtMoney(cost))}
-        ${bcell('pre-warm',fmtMoney(prewarm))}
-      </div>
-    </div>`;
-  }).join('');
+      <div class="bstats">${BATCH_FIELDS.map(([l,k])=>`<div><span>${l}</span><b data-f="${k}">–</b></div>`).join('')}</div>`;
+    host.appendChild(el);
+    const fields={}; el.querySelectorAll('[data-f]').forEach(n=>fields[n.dataset.f]=n);
+    batchDom.set(b.id,{el,fields});
+  });
+  // update values in place (no innerHTML churn, so the × button survives clicks)
+  S.batches.forEach(b=>{
+    const rec=batchDom.get(b.id); if(!rec) return; const f=rec.fields;
+    const pending=b.count-b.done-b.failed, complete=(b.done+b.failed>=b.count);
+    const elapsed=(complete&&b.last!=null)? b.last : (S.t-b.t0);
+    const clusterHr=S.nodes.length*S.node.hr;
+    f.done.textContent=b.done;
+    f.pending.textContent=pending;
+    f.failed.textContent=b.failed; f.failed.style.color=b.failed?'var(--bad)':'';
+    f.oom.textContent=b.oom; f.oom.style.color=b.oom?'var(--warn)':'';
+    f.first.textContent=b.first!=null? fmtTime(b.first):'–';
+    f.last.textContent=complete&&b.last!=null? fmtTime(b.last):(pending>0?'running…':'–');
+    f.avg.textContent=b.done? fmtTime(b.sum/b.done):'–';
+    f.max.textContent=b.max? fmtTime(b.max):'–';
+    f.cost.textContent=fmtMoney(elapsed/3600*clusterHr);
+    f.prewarm.textContent=fmtMoney(0.5*clusterHr);
+  });
 }
 
 // ---------------------------------------------------------------- go
