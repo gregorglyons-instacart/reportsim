@@ -21,6 +21,9 @@
   .wrap{display:grid;grid-template-columns:280px 1fr;gap:10px;padding:10px;
     max-width:1600px;margin:0 auto}
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px}
+  .col{display:flex;flex-direction:column;gap:10px;min-width:0}
+  .preset{font-size:11px;padding:4px 8px;font-weight:500}
+  .preset:hover{border-color:var(--warn);color:var(--warn)}
   .top{grid-column:1/3;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
   .num{font-variant-numeric:tabular-nums;font-family:var(--mono)}
 
@@ -121,6 +124,7 @@
   </div>
 
   <!-- LEFT: config -->
+  <div class="col">
   <div class="panel">
     <h2>Cluster config</h2>
 
@@ -156,6 +160,55 @@
       <span style="text-transform:none;font-weight:400;color:var(--muted)">@ intensity <span id="curveInt">0.30</span></span></h2>
     <table class="curve" id="curve"></table>
     <div class="hint">Peak GB per report percentile, and the smallest pod tier that fits it.</div>
+  </div>
+
+  <div class="panel">
+    <h2>Burst injector</h2>
+    <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:9px" id="presets"></div>
+
+    <div class="ctl">
+      <label><span>Reports</span><span class="v num" id="bCountV">200</span></label>
+      <input type="range" id="bCount" min="1" max="2000" step="1" value="200">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div class="ctl" style="margin-bottom:8px">
+        <label><span>Mem min</span><span class="v num" id="bMinV">0.5 GB</span></label>
+        <input type="range" id="bMin" min="0.1" max="30" step="0.1" value="0.5">
+      </div>
+      <div class="ctl" style="margin-bottom:8px">
+        <label><span>Mem max</span><span class="v num" id="bMaxV">1.5 GB</span></label>
+        <input type="range" id="bMax" min="0.1" max="30" step="0.1" value="1.5">
+      </div>
+    </div>
+    <div class="ctl">
+      <label><span>Memory distribution</span></label>
+      <select id="bDist">
+        <option value="uniform">uniform</option>
+        <option value="small">skew small (most near min)</option>
+        <option value="large">skew large (most near max)</option>
+        <option value="const">constant (all = max)</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label><span>Duration</span></label>
+      <select id="bDur">
+        <option value="corr">correlated with memory</option>
+        <option value="fixed">fixed</option>
+      </select>
+    </div>
+    <div class="ctl" id="bDurFixedWrap" style="display:none">
+      <label><span>Fixed duration</span><span class="v num" id="bDurFixedV">5 min</span></label>
+      <input type="range" id="bDurFixed" min="1" max="240" step="1" value="5">
+    </div>
+    <div class="ctl">
+      <label><span>Enter at tier</span></label>
+      <select id="bTier"></select>
+    </div>
+    <button id="inject" class="go" style="width:100%">⚡ Inject burst</button>
+    <div class="hint">Injected reports land in the chosen tier's queue immediately, on top
+      of the baseline load. Correlated duration derives runtime from each report's memory
+      (bigger → longer, up to 4h).</div>
+  </div>
   </div>
 
   <!-- RIGHT: dashboard -->
@@ -244,6 +297,14 @@ const INSTANCES = [
 ];
 const TIER_COLORS = ['#2a78d6','#eb6834','#1baf7a','#e87ba4','#eda100','#9085e9'];
 const MAX_TIERS = 6;
+const PRESETS = [
+  {name:'Monthly batch',   count:800, min:0.5, max:1.5, dist:'uniform', dur:'corr',  tier:0},
+  {name:'Thundering herd', count:400, min:0.4, max:0.9, dist:'small',   dur:'corr',  tier:0},
+  {name:'OOM storm',       count:60,  min:3,   max:10,  dist:'uniform', dur:'corr',  tier:0},
+  {name:'Heavy tenant',    count:25,  min:8,   max:27,  dist:'large',   dur:'corr',  tier:0},
+  {name:'Whales (4h)',     count:4,   min:20,  max:27,  dist:'const',   dur:'corr',  tier:0},
+  {name:'Fixed 30-min job',count:100, min:2,   max:4,   dist:'uniform', dur:'fixed', durMin:30, tier:0},
+];
 
 // ---------------------------------------------------------------- sampling
 function randn(){ // Box-Muller
@@ -284,6 +345,18 @@ function sampleReport(intensity){
   let mp=P+randn()*4;                 // memory correlated with duration, w/ jitter
   const peak=interpMem(mp,intensity);
   return {peak,dur};
+}
+// invert the memory curve, then derive a correlated duration
+function memToPct(mem,intensity){
+  let lo=0.5,hi=100;
+  for(let i=0;i<40;i++){ const mid=(lo+hi)/2; if(interpMem(mid,intensity)<mem) lo=mid; else hi=mid; }
+  return (lo+hi)/2;
+}
+function durForMem(mem){ return sampleDuration(memToPct(mem,S.intensity)); }
+function burstMem(dist,mn,mx){
+  const r=Math.random();
+  const f = dist==='small'? r*r : dist==='large'? Math.sqrt(r) : dist==='const'? 1 : r;
+  return mn+f*(mx-mn);
 }
 
 // ---------------------------------------------------------------- k8s reserve
@@ -348,7 +421,7 @@ function buildCluster(){
   while(S.hist.q.length<S.tiers.length) S.hist.q.push([]);
   S.hist.q.length=S.tiers.length;
 
-  buildNodeDOM(); buildTierDOM(); renderClusterStats(); renderCurve(); renderQLegend();
+  buildNodeDOM(); buildTierDOM(); renderClusterStats(); renderCurve(); renderQLegend(); renderBurstTiers();
 }
 function normalizeTierNames(){ S.tierCfg.forEach((c,i)=>c.name='T'+(i+1)); }
 function renderTierConfig(){
@@ -367,6 +440,12 @@ function renderTierConfig(){
 function renderQLegend(){
   const el=$('qLegend'); if(!el) return;
   el.innerHTML=S.tiers.map(t=>`<span><span class="dot" style="background:${t.color}"></span>${t.name}</span>`).join('');
+}
+function renderBurstTiers(){
+  const sel=$('bTier'); if(!sel) return;
+  const prev=sel.value;
+  sel.innerHTML=S.tiers.map((t,i)=>`<option value="${i}">${t.name} — ${t.ram}GB ×${S.tierCfg[i].count}</option>`).join('');
+  if(prev!=='' && +prev<S.tiers.length) sel.value=prev;
 }
 
 // ---------------------------------------------------------------- sim step
@@ -647,6 +726,17 @@ function initControls(){
     normalizeTierNames(); renderTierConfig(); buildCluster();
   };
 
+  // burst injector
+  bindSlider('bCount','bCountV',v=>String(Math.round(v)));
+  bindSlider('bMin','bMinV',v=>v.toFixed(1)+' GB');
+  bindSlider('bMax','bMaxV',v=>v.toFixed(1)+' GB');
+  bindSlider('bDurFixed','bDurFixedV',v=>Math.round(v)+' min');
+  $('bDur').onchange=e=>{ $('bDurFixedWrap').style.display = e.target.value==='fixed'?'':'none'; };
+  const pc=$('presets');
+  PRESETS.forEach(p=>{ const b=document.createElement('button'); b.className='preset';
+    b.textContent=p.name; b.onclick=()=>applyPreset(p); pc.appendChild(b); });
+  $('inject').onclick=injectBurst;
+
   bindSlider('speed','speedV',v=>{S.speed=v;return v+'×';});
   const lamEl=$('lam');
   const updLam=()=>{ S.lambda=posToLam(+lamEl.value); $('lamV').textContent=fmtLam(S.lambda); };
@@ -665,6 +755,28 @@ function reset(){
   S.t=0; S.ctr={arr:0,done:0,fail:0,req:0}; S.lat={n:0,sum:0};
   S.rate={arr:0,comp:0}; S.hist={arr:[],comp:[],q:[[],[],[]]};
   $('log').innerHTML=''; buildCluster();
+}
+function setVal(id,v){ const e=$(id); e.value=v; e.dispatchEvent(new Event('input')); }
+function applyPreset(p){
+  setVal('bCount',p.count); setVal('bMin',p.min); setVal('bMax',p.max);
+  $('bDist').value=p.dist; $('bDur').value=p.dur;
+  $('bDurFixedWrap').style.display = p.dur==='fixed'?'':'none';
+  if(p.durMin) setVal('bDurFixed',p.durMin);
+  $('bTier').value=Math.min(p.tier,S.tiers.length-1);
+}
+function injectBurst(){
+  const count=Math.round(+$('bCount').value);
+  let mn=+$('bMin').value, mx=+$('bMax').value; if(mx<mn){[mn,mx]=[mx,mn];}
+  const dist=$('bDist').value, durMode=$('bDur').value, fixedS=(+$('bDurFixed').value)*60;
+  const ti=Math.min(+$('bTier').value||0, S.tiers.length-1);
+  for(let i=0;i<count;i++){
+    const peak=burstMem(dist,mn,mx);
+    const dur = durMode==='fixed'? fixedS : durForMem(peak)*(0.8+0.4*Math.random());
+    S.tiers[ti].queue.push({id:++S.ctr.arr,peak,dur,progress:0,tier:ti,
+      state:'queued',arrT:S.t,_init:true});
+  }
+  const durTxt = durMode==='fixed'? `${(+$('bDurFixed').value)}min fixed` : 'correlated';
+  log(`⚡ injected ${count} reports · ${mn.toFixed(1)}–${mx.toFixed(1)}GB (${dist}) · ${durTxt} → ${S.tiers[ti].name}`,'w');
 }
 
 // ---------------------------------------------------------------- go
