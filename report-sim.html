@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Report Queue Simulator</title>
+<style>
+  :root{
+    --bg:#141618; --panel:#1c1f22; --panel2:#242a2e; --line:#333a3f;
+    --ink:#e7ecee; --ink2:#9aa4ab; --muted:#6b757c;
+    --s:#2a78d6; --m:#eb6834; --l:#1baf7a;
+    --warn:#fab219; --bad:#d03b3b; --good:#0ca30c;
+    --mono:"SF Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:13px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif}
+  h1{font-size:15px;margin:0;font-weight:650;letter-spacing:.2px}
+  h2{font-size:11px;margin:0 0 6px;font-weight:600;color:var(--ink2);
+    text-transform:uppercase;letter-spacing:.7px}
+  .wrap{display:grid;grid-template-columns:280px 1fr;gap:10px;padding:10px;
+    max-width:1600px;margin:0 auto}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px}
+  .top{grid-column:1/3;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .num{font-variant-numeric:tabular-nums;font-family:var(--mono)}
+
+  /* controls */
+  .ctl{margin-bottom:12px}
+  .ctl label{display:flex;justify-content:space-between;color:var(--ink2);
+    font-size:11px;margin-bottom:3px}
+  .ctl .v{color:var(--ink);font-family:var(--mono)}
+  input[type=range]{width:100%;margin:0;accent-color:var(--s)}
+  select,input[type=number]{background:var(--panel2);color:var(--ink);
+    border:1px solid var(--line);border-radius:4px;padding:4px 6px;font-size:12px;
+    font-family:var(--mono);width:100%}
+  button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);
+    border-radius:5px;padding:6px 12px;font-size:12px;cursor:pointer;font-weight:600}
+  button:hover{border-color:#4a545a}
+  button.go{background:var(--s);border-color:var(--s);color:#fff}
+  button.stop{background:var(--bad);border-color:var(--bad);color:#fff}
+  .tierrow{display:grid;grid-template-columns:1fr 62px 62px;gap:6px;align-items:center;
+    margin-bottom:6px}
+  .tierrow .tag{font-weight:600;font-size:11px;display:flex;align-items:center;gap:5px}
+  .dot{width:9px;height:9px;border-radius:2px;display:inline-block}
+  .hint{color:var(--muted);font-size:10.5px;margin-top:2px}
+
+  /* kpis */
+  .kpis{display:grid;grid-template-columns:repeat(8,1fr);gap:8px;margin-bottom:10px}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px 9px}
+  .kpi .k{font-size:10px;color:var(--ink2);text-transform:uppercase;letter-spacing:.5px}
+  .kpi .val{font-size:19px;font-family:var(--mono);margin-top:3px;font-variant-numeric:tabular-nums}
+  .kpi .sub{font-size:10px;color:var(--muted);font-family:var(--mono)}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+
+  /* nodes */
+  #nodes{display:flex;flex-wrap:wrap;gap:8px}
+  .node{background:var(--panel2);border:1px solid var(--line);border-radius:5px;
+    padding:6px;width:168px}
+  .node .nh{display:flex;justify-content:space-between;font-size:10px;color:var(--ink2);
+    margin-bottom:5px;font-family:var(--mono)}
+  .node .membar{height:4px;background:#000;border-radius:2px;overflow:hidden;margin-bottom:6px}
+  .node .memfill{height:100%;background:var(--muted)}
+  .pods{display:flex;flex-wrap:wrap;gap:3px}
+  .pod{width:20px;height:20px;border-radius:3px;position:relative;overflow:hidden;
+    background:#0c0e0f;border:1px solid #000;cursor:default}
+  .pod .fill{position:absolute;left:0;bottom:0;width:100%;transition:height .12s linear}
+  .pod.run{outline:1px solid rgba(255,255,255,.25)}
+
+  /* tier panels */
+  .tp{background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:8px}
+  .tp .th{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+  .tp .tname{font-weight:600;display:flex;align-items:center;gap:6px}
+  .bar{height:8px;background:#0c0e0f;border-radius:3px;overflow:hidden;margin:3px 0}
+  .bar>div{height:100%}
+  .tstat{display:flex;justify-content:space-between;font-family:var(--mono);
+    font-size:11px;color:var(--ink2);font-variant-numeric:tabular-nums}
+  .tstat b{color:var(--ink);font-weight:600}
+
+  canvas{width:100%;height:150px;display:block}
+  .warn{background:#3a2a08;border:1px solid var(--warn);color:#f5cf6b;padding:6px 9px;
+    border-radius:5px;font-size:11.5px;margin-bottom:8px;display:none}
+  #log{font-family:var(--mono);font-size:10.5px;height:118px;overflow:hidden;
+    display:flex;flex-direction:column-reverse}
+  #log div{padding:1px 0;color:var(--ink2)}
+  .sp{flex:1}
+  .legend{display:flex;gap:12px;font-size:10.5px;color:var(--ink2);margin-top:4px;font-family:var(--mono)}
+  .legend span{display:flex;align-items:center;gap:4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top panel">
+    <h1>Report Queue Simulator</h1>
+    <button id="run" class="go">▶ Start</button>
+    <button id="reset">Reset</button>
+    <div class="sp"></div>
+    <div style="min-width:150px">
+      <label style="display:flex;justify-content:space-between;font-size:11px;color:var(--ink2)">
+        <span>Sim speed</span><span class="v num" id="speedV">60×</span></label>
+      <input type="range" id="speed" min="1" max="600" step="1" value="60">
+    </div>
+    <div style="min-width:150px">
+      <label style="display:flex;justify-content:space-between;font-size:11px;color:var(--ink2)">
+        <span>Load (reports/s)</span><span class="v num" id="lamV">5.0</span></label>
+      <input type="range" id="lam" min="0" max="80" step="0.5" value="5">
+    </div>
+    <div class="num" style="color:var(--ink2);font-size:11px">sim&nbsp;<span id="clock">0.0s</span></div>
+  </div>
+
+  <!-- LEFT: config -->
+  <div class="panel">
+    <h2>Cluster config</h2>
+
+    <div class="ctl">
+      <label><span>Node instance</span></label>
+      <select id="node"></select>
+      <div class="hint" id="nodeHint"></div>
+    </div>
+
+    <h2 style="margin-top:14px">Pod tiers</h2>
+    <div style="display:grid;grid-template-columns:1fr 62px 62px;gap:6px;font-size:10px;color:var(--muted);margin-bottom:3px">
+      <span>tier</span><span>RAM GB</span><span>pods</span></div>
+    <div id="tiers"></div>
+    <div class="hint">Reports start on the smallest tier. On OOM they checkpoint and
+      escalate one tier up.</div>
+
+    <h2 style="margin-top:14px">Model</h2>
+    <div class="ctl">
+      <label><span>Pod overhead (reserved)</span><span class="v num" id="ovV">50 MB</span></label>
+      <input type="range" id="ov" min="0" max="500" step="10" value="50">
+    </div>
+    <div class="ctl">
+      <label><span>Checkpoint+restore penalty</span><span class="v num" id="penV">3.0s</span></label>
+      <input type="range" id="pen" min="0" max="30" step="0.5" value="3">
+    </div>
+    <div class="ctl">
+      <label><span>Workload intensity</span><span class="v num" id="intV">0.30</span></label>
+      <input type="range" id="int" min="0" max="1" step="0.05" value="0.3">
+      <div class="hint">0 = typical memory profile · 1 = hottest-tenant profile</div>
+    </div>
+
+    <h2 style="margin-top:14px">Cluster</h2>
+    <div class="tstat"><span>nodes</span><b class="num" id="cNodes">–</b></div>
+    <div class="tstat"><span>pods (sched / req)</span><b class="num" id="cPods">–</b></div>
+    <div class="tstat"><span>cluster RAM</span><b class="num" id="cRam">–</b></div>
+    <div class="tstat"><span>est. cost</span><b class="num" id="cCost">–</b></div>
+  </div>
+
+  <!-- RIGHT: dashboard -->
+  <div>
+    <div id="warn" class="warn"></div>
+
+    <div class="kpis">
+      <div class="kpi"><div class="k">In system</div><div class="val num" id="kIn">0</div><div class="sub">queued + running</div></div>
+      <div class="kpi"><div class="k">Queued</div><div class="val num" id="kQ">0</div><div class="sub">waiting</div></div>
+      <div class="kpi"><div class="k">Running</div><div class="val num" id="kRun">0</div><div class="sub" id="kUtil">0% util</div></div>
+      <div class="kpi"><div class="k">Throughput</div><div class="val num" id="kThr">0</div><div class="sub">reports/s</div></div>
+      <div class="kpi"><div class="k">Completed</div><div class="val num" id="kDone">0</div><div class="sub" id="kLat">– avg</div></div>
+      <div class="kpi"><div class="k">Escalations</div><div class="val num" id="kReq" style="color:var(--warn)">0</div><div class="sub">OOM checkpoints</div></div>
+      <div class="kpi"><div class="k">Failed</div><div class="val num" id="kFail" style="color:var(--bad)">0</div><div class="sub">no pod fits</div></div>
+      <div class="kpi"><div class="k">Arrivals</div><div class="val num" id="kArr">0</div><div class="sub">total</div></div>
+    </div>
+
+    <div class="panel" style="margin-bottom:10px">
+      <h2>Node allocation (k8s bin-pack)</h2>
+      <div id="nodes"></div>
+    </div>
+
+    <div class="grid3" style="margin-bottom:10px" id="tierPanels"></div>
+
+    <div class="grid2">
+      <div class="panel">
+        <h2>Arrivals vs throughput (reports/s)</h2>
+        <canvas id="chThr" height="150"></canvas>
+        <div class="legend"><span><span class="dot" style="background:var(--ink2)"></span>arrivals</span>
+          <span><span class="dot" style="background:var(--good)"></span>completed</span></div>
+      </div>
+      <div class="panel">
+        <h2>Queue depth by tier</h2>
+        <canvas id="chQ" height="150"></canvas>
+        <div class="legend">
+          <span><span class="dot" style="background:var(--s)"></span>S</span>
+          <span><span class="dot" style="background:var(--m)"></span>M</span>
+          <span><span class="dot" style="background:var(--l)"></span>L</span></div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:10px">
+      <h2>Event log</h2>
+      <div id="log"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------- data
+const BANDS = [
+  {name:'<1s',    pct:63.14, min:0.2,   max:1},
+  {name:'1-5s',   pct:35.06, min:1,     max:5},
+  {name:'5-30s',  pct:1.55,  min:5,     max:30},
+  {name:'30-60s', pct:0.10,  min:30,    max:60},
+  {name:'1-5min', pct:0.11,  min:60,    max:300},
+  {name:'5-30min',pct:0.04,  min:300,   max:1800},
+  {name:'>30min', pct:0.01,  min:14400, max:14400}, // >30min pinned to 4h
+];
+(()=>{let a=0;for(const b of BANDS){b.lo=a;a+=b.pct;b.hi=a;}BANDS.total=a;})();
+
+// memory percentiles (GB): typical vs hottest tenant
+const MEM = [
+  {p:1,typ:0.43,hot:0.48},{p:5,typ:0.56,hot:0.63},{p:10,typ:0.6,hot:0.68},
+  {p:25,typ:0.68,hot:0.77},{p:50,typ:0.74,hot:0.84},{p:75,typ:0.8,hot:0.96},
+  {p:90,typ:0.89,hot:1.25},{p:95,typ:0.96,hot:1.87},{p:96,typ:0.97,hot:2.32},
+  {p:97,typ:1.04,hot:3.09},{p:97.5,typ:1.09,hot:3.36},{p:98,typ:1.19,hot:3.75},
+  {p:99,typ:2.61,hot:8.73},{p:99.5,typ:5.69,hot:24.88},{p:99.9,typ:7.44,hot:27.5},
+  {p:100,typ:11.15,hot:27.7},
+];
+
+const INSTANCES = [
+  {name:'Standard_D2als_v7',cls:'balanced low-mem',vcore:2,ram:4, hr:0.188,mo:137.24},
+  {name:'Standard_D2as_v7', cls:'balanced',        vcore:2,ram:8, hr:0.201,mo:146.73},
+  {name:'Standard_E2as_v5', cls:'memory (old)',    vcore:2,ram:16,hr:0.228,mo:166.44},
+  {name:'Standard_E2as_v7', cls:'memory',          vcore:2,ram:16,hr:0.235,mo:171.55},
+  {name:'Standard_F2as_v7', cls:'compute',         vcore:2,ram:4, hr:0.256,mo:186.88},
+  {name:'Standard_D4als_v7',cls:'balanced low-mem',vcore:4,ram:8, hr:0.376,mo:274.48},
+  {name:'Standard_D4as_v7', cls:'balanced',        vcore:4,ram:16,hr:0.401,mo:292.73},
+  {name:'Standard_E4as_v5', cls:'memory (old)',    vcore:4,ram:32,hr:0.455,mo:332.15},
+  {name:'Standard_E4as_v7', cls:'memory',          vcore:4,ram:32,hr:0.47, mo:343.1},
+  {name:'Standard_F4as_v7', cls:'compute',         vcore:4,ram:8, hr:0.511,mo:373.03},
+  {name:'Standard_D8als_v7',cls:'balanced low-mem',vcore:8,ram:16,hr:0.753,mo:549.69},
+  {name:'Standard_D8as_v7', cls:'balanced',        vcore:8,ram:32,hr:0.802,mo:585.46},
+  {name:'Standard_E8as_v5', cls:'memory (old)',    vcore:8,ram:64,hr:0.91, mo:664.3},
+  {name:'Standard_E8as_v7', cls:'memory',          vcore:8,ram:64,hr:0.939,mo:685.47},
+  {name:'Standard_F8as_v7', cls:'compute',         vcore:8,ram:16,hr:1.022,mo:746.06},
+];
+const TIER_COLORS = ['#2a78d6','#eb6834','#1baf7a','#e87ba4'];
+
+// ---------------------------------------------------------------- sampling
+function randn(){ // Box-Muller
+  let u=0,v=0; while(!u)u=Math.random(); while(!v)v=Math.random();
+  return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+}
+function poisson(l){
+  if(l<=0) return 0;
+  if(l>30) return Math.max(0,Math.round(l+randn()*Math.sqrt(l)));
+  const L=Math.exp(-l); let k=0,p=1;
+  do{k++;p*=Math.random();}while(p>L);
+  return k-1;
+}
+function sampleDuration(P){
+  for(const b of BANDS){
+    if(P<b.hi || b===BANDS[BANDS.length-1]){
+      if(b.max===b.min) return b.max;
+      const pos=Math.min(1,Math.max(0,(P-b.lo)/(b.hi-b.lo)));
+      return b.min + pos*(b.max-b.min);
+    }
+  }
+  return 1;
+}
+function interpMem(p,intensity){
+  p=Math.max(0.5,Math.min(100,p));
+  let a=MEM[0],b=MEM[MEM.length-1];
+  for(let i=0;i<MEM.length-1;i++){
+    if(p>=MEM[i].p && p<=MEM[i+1].p){a=MEM[i];b=MEM[i+1];break;}
+  }
+  if(p<=MEM[0].p){a=b=MEM[0];}
+  const t=(b.p===a.p)?0:(p-a.p)/(b.p-a.p);
+  const typ=a.typ+(b.typ-a.typ)*t, hot=a.hot+(b.hot-a.hot)*t;
+  return typ*(1-intensity)+hot*intensity;
+}
+function sampleReport(intensity){
+  const P=Math.random()*BANDS.total;
+  const dur=sampleDuration(P);
+  let mp=P+randn()*4;                 // memory correlated with duration, w/ jitter
+  const peak=interpMem(mp,intensity);
+  return {peak,dur};
+}
+
+// ---------------------------------------------------------------- k8s reserve
+// AKS/GKE-style tiered memory reservation -> allocatable
+function kubeReservedGB(ramGB){
+  let mb=ramGB*1024, rem=mb, r=0;
+  const tiers=[[4096,.25],[4096,.20],[8192,.10],[112*1024,.06],[Infinity,.02]];
+  for(const [cap,f] of tiers){const t=Math.min(rem,cap);r+=t*f;rem-=t;if(rem<=0)break;}
+  return (r+100)/1024; // +100MB eviction threshold
+}
+
+// ---------------------------------------------------------------- state
+const S = {
+  running:false, t:0, lastReal:0,
+  node:INSTANCES[13],               // E8as_v7 (64GB)
+  overhead:0.05, penalty:3, intensity:0.3, lambda:5, speed:60,
+  tierCfg:[{name:'S',ram:2,count:20},{name:'M',ram:8,count:4},{name:'L',ram:32,count:2}],
+  tiers:[], nodes:[], pods:[],
+  ctr:{arr:0,done:0,fail:0,req:0},
+  lat:{n:0,sum:0},
+  rate:{arr:0,comp:0},
+  hist:{arr:[],comp:[],q:[[],[],[]]},
+  arrAcc:0, // fractional arrivals carry
+};
+const HIST_MAX=200;
+let podUID=0;
+
+function buildCluster(){
+  // collect running reports to re-queue (preserve progress)
+  const inflight=[];
+  for(const p of S.pods) if(p.report){ p.report.state='queued'; inflight.push(p.report); p.report=null; }
+
+  S.tiers = S.tierCfg.map((c,i)=>({
+    name:c.name, ram:c.ram, usable:Math.max(0.01,c.ram-S.overhead),
+    color:TIER_COLORS[i], queue:[], pods:[], oom:0, done:0
+  }));
+  // requeue inflight into their tier queue front
+  for(const r of inflight){ const ti=Math.min(r.tier,S.tiers.length-1); S.tiers[ti].queue.unshift(r); }
+
+  // create pods
+  S.pods=[];
+  S.tiers.forEach((t,ti)=>{
+    for(let i=0;i<S.tierCfg[ti].count;i++){
+      const pod={uid:podUID++,tier:ti,ram:t.ram,usable:t.usable,report:null,node:-1,sched:false,el:null,fill:null};
+      t.pods.push(pod); S.pods.push(pod);
+    }
+  });
+
+  // bin-pack (first-fit-decreasing) onto nodes
+  const alloc=Math.max(0.01,S.node.ram-kubeReservedGB(S.node.ram));
+  const order=[...S.pods].sort((a,b)=>b.ram-a.ram);
+  S.nodes=[];
+  let unsched=0;
+  for(const pod of order){
+    if(pod.ram>alloc){ pod.sched=false; pod.node=-1; unsched++; continue; }
+    let placed=false;
+    for(const n of S.nodes){ if(n.free>=pod.ram){ n.pods.push(pod); n.free-=pod.ram; pod.node=n.id; placed=true; break; } }
+    if(!placed){ const n={id:S.nodes.length,cap:alloc,free:alloc-pod.ram,pods:[pod]}; pod.node=n.id; S.nodes.push(n); }
+    pod.sched=true;
+  }
+  S.alloc=alloc; S.unsched=unsched;
+  buildNodeDOM(); buildTierDOM(); renderClusterStats();
+}
+
+// ---------------------------------------------------------------- sim step
+function stepSim(dt){
+  // arrivals (Poisson)
+  S.arrCount=0;
+  const n=poisson(S.lambda*dt);
+  for(let i=0;i<Math.min(n,8000);i++){
+    S.tiers[0].queue.push({id:++S.ctr.arr,peak:0,dur:0,progress:0,tier:0,
+      state:'queued',arrT:S.t,restore:0,_init:false});
+    S.arrCount++;
+  }
+
+  // advance running pods
+  S.compCount=0;
+  for(const pod of S.pods){
+    const r=pod.report; if(!r) continue;
+    if(!r._init){ const s=sampleReport(S.intensity); r.peak=s.peak; r.dur=s.dur; r._init=true; }
+    if(r.restore>0){ r.restore-=dt; if(r.restore<0) r.restore=0; continue; }
+    r.progress += dt / r.dur;
+    const curMem = r.peak * Math.min(1,r.progress);
+    if(curMem > pod.usable && r.progress < 1){
+      // OOM: checkpoint + escalate
+      pod.report=null;
+      S.ctr.req++; S.tiers[pod.tier].oom++;
+      if(r.tier+1 < S.tiers.length){
+        r.tier++; r.restore=S.penalty; r.state='queued';
+        S.tiers[r.tier].queue.unshift(r);
+        if(r.peak>6) log(`#${r.id} OOM on ${S.tiers[pod.tier].name} @${(r.peak).toFixed(1)}GB → escalate to ${S.tiers[r.tier].name} (${(r.progress*100).toFixed(0)}% saved)`,'w');
+      } else {
+        r.state='failed'; S.ctr.fail++;
+        log(`#${r.id} FAILED — needs ${r.peak.toFixed(1)}GB, largest pod ${S.tiers[r.tier].usable.toFixed(1)}GB`,'b');
+      }
+    } else if(r.progress>=1){
+      pod.report=null; S.ctr.done++; S.tiers[pod.tier].done++; S.compCount++;
+      const wall=S.t-r.arrT; S.lat.n++; S.lat.sum+=wall;
+      if(r.dur>=14400) log(`#${r.id} done — 4h report finished on ${S.tiers[pod.tier].name}`,'g');
+    }
+  }
+
+  // schedule queued -> free pods (per tier, FIFO)
+  for(const t of S.tiers){
+    if(!t.queue.length) continue;
+    for(const pod of t.pods){
+      if(!t.queue.length) break;
+      if(pod.report||!pod.sched) continue;
+      const r=t.queue.shift(); r.state='running'; pod.report=r;
+      if(!r._init){ const s=sampleReport(S.intensity); r.peak=s.peak; r.dur=s.dur; r._init=true; }
+    }
+  }
+}
+
+// ---------------------------------------------------------------- loop
+function frame(now){
+  if(!S.lastReal) S.lastReal=now;
+  let realDt=(now-S.lastReal)/1000; S.lastReal=now;
+  realDt=Math.min(realDt,0.1);
+  if(S.running){
+    const simDt=realDt*S.speed;
+    const steps=Math.min(120,Math.max(1,Math.ceil(simDt/0.25)));
+    const sub=simDt/steps;
+    let arr=0,comp=0;
+    for(let i=0;i<steps;i++){ stepSim(sub); arr+=S.arrCount; comp+=S.compCount; }
+    S.t+=simDt;
+    // smoothed rates
+    const inst_arr=arr/simDt, inst_comp=comp/simDt;
+    S.rate.arr=S.rate.arr*0.85+inst_arr*0.15;
+    S.rate.comp=S.rate.comp*0.85+inst_comp*0.15;
+  }
+  renderThrottled(now);
+  requestAnimationFrame(frame);
+}
+
+// ---------------------------------------------------------------- DOM build
+const $=id=>document.getElementById(id);
+function buildNodeDOM(){
+  const host=$('nodes'); host.innerHTML='';
+  for(const n of S.nodes){
+    const el=document.createElement('div'); el.className='node';
+    el.innerHTML=`<div class="nh"><span>node ${n.id}</span><span>${S.node.ram}GB</span></div>
+      <div class="membar"><div class="memfill" data-node="${n.id}"></div></div>
+      <div class="pods"></div>`;
+    const pods=el.querySelector('.pods');
+    for(const pod of n.pods){
+      const pe=document.createElement('div'); pe.className='pod';
+      pe.title=`tier ${S.tiers[pod.tier].name} · ${pod.ram}GB`;
+      const f=document.createElement('div'); f.className='fill';
+      f.style.background=S.tiers[pod.tier].color;
+      pe.appendChild(f); pod.el=pe; pod.fill=f; pods.appendChild(pe);
+    }
+    n.memEl=el.querySelector('.memfill');
+    host.appendChild(el);
+  }
+  if(S.unsched>0){
+    const w=$('warn'); w.style.display='block';
+    w.textContent=`⚠ ${S.unsched} pod(s) exceed node allocatable (${S.alloc.toFixed(1)}GB usable on ${S.node.ram}GB ${S.node.name}) — unschedulable. Pick a larger node or smaller pods.`;
+  } else $('warn').style.display='none';
+}
+function buildTierDOM(){
+  const host=$('tierPanels'); host.innerHTML='';
+  S.tiers.forEach((t,i)=>{
+    const el=document.createElement('div'); el.className='tp';
+    el.innerHTML=`<div class="th"><span class="tname"><span class="dot" style="background:${t.color}"></span>
+      Tier ${t.name} · ${t.ram}GB</span><span class="num" style="font-size:11px;color:var(--ink2)"
+      data-t="cap${i}"></span></div>
+      <div class="tstat"><span>running</span><b class="num" data-t="run${i}">0</b></div>
+      <div class="bar"><div data-t="util${i}" style="background:${t.color};width:0%"></div></div>
+      <div class="tstat"><span>queued</span><b class="num" data-t="q${i}">0</b></div>
+      <div class="bar"><div data-t="qbar${i}" style="background:${t.color};opacity:.5;width:0%"></div></div>
+      <div class="tstat"><span>completed</span><b class="num" data-t="done${i}">0</b></div>
+      <div class="tstat"><span>OOM escalations</span><b class="num" style="color:var(--warn)" data-t="oom${i}">0</b></div>`;
+    host.appendChild(el);
+  });
+}
+
+// ---------------------------------------------------------------- render
+let lastRender=0,lastHist=0;
+function renderThrottled(now){
+  if(now-lastRender<110) return; lastRender=now;
+
+  let queued=0,running=0,cap=0;
+  S.tiers.forEach((t,i)=>{
+    const run=t.pods.filter(p=>p.report&&p.sched).length;
+    const sc=t.pods.filter(p=>p.sched).length;
+    queued+=t.queue.length; running+=run; cap+=sc;
+    setT(`run${i}`,run); setT(`q${i}`,t.queue.length);
+    setT(`done${i}`,t.done); setT(`oom${i}`,t.oom); setT(`cap${i}`,`${run}/${sc} busy`);
+    setW(`util${i}`, sc? run/sc*100:0);
+    setW(`qbar${i}`, Math.min(100, t.queue.length/ Math.max(1,sc) *100/3));
+  });
+  const util=cap? running/cap*100:0;
+  $('kIn').textContent=fmt(queued+running);
+  $('kQ').textContent=fmt(queued);
+  $('kRun').textContent=fmt(running);
+  $('kUtil').textContent=util.toFixed(0)+'% util';
+  $('kThr').textContent=S.rate.comp.toFixed(1);
+  $('kDone').textContent=fmt(S.ctr.done);
+  $('kLat').textContent=S.lat.n? (S.lat.sum/S.lat.n).toFixed(1)+'s avg':'– avg';
+  $('kReq').textContent=fmt(S.ctr.req);
+  $('kFail').textContent=fmt(S.ctr.fail);
+  $('kArr').textContent=fmt(S.ctr.arr);
+  $('clock').textContent=fmtTime(S.t);
+
+  // pods
+  for(const pod of S.pods){
+    if(!pod.el) continue;
+    const r=pod.report;
+    if(r){
+      const cur=r.peak*Math.min(1,r.progress);
+      pod.fill.style.height=Math.min(100,cur/pod.ram*100)+'%';
+      pod.fill.style.opacity = r.restore>0? .35:1;
+      pod.el.classList.add('run');
+    } else { pod.fill.style.height='0%'; pod.el.classList.remove('run'); }
+  }
+  for(const n of S.nodes){ if(n.memEl) n.memEl.style.width=((n.cap-n.free)/n.cap*100)+'%'; }
+
+  // history + charts
+  if(now-lastHist>150){
+    lastHist=now;
+    push(S.hist.arr,S.rate.arr); push(S.hist.comp,S.rate.comp);
+    S.tiers.forEach((t,i)=>{ if(i<3) push(S.hist.q[i],t.queue.length); });
+    drawThr(); drawQ();
+  }
+}
+function setT(k,v){ const e=document.querySelector(`[data-t="${k}"]`); if(e)e.textContent=typeof v==='number'?fmt(v):v; }
+function setW(k,v){ const e=document.querySelector(`[data-t="${k}"]`); if(e)e.style.width=Math.min(100,v)+'%'; }
+function push(a,v){ a.push(v); if(a.length>HIST_MAX)a.shift(); }
+function fmt(n){ return n>=10000? (n/1000).toFixed(1)+'k': (''+Math.round(n)); }
+function fmtTime(s){ if(s<90)return s.toFixed(1)+'s'; if(s<5400)return (s/60).toFixed(1)+'m'; return (s/3600).toFixed(2)+'h'; }
+
+function renderClusterStats(){
+  const sched=S.pods.filter(p=>p.sched).length;
+  $('cNodes').textContent=S.nodes.length;
+  $('cPods').textContent=`${sched} / ${S.pods.length}`;
+  $('cRam').textContent=(S.nodes.length*S.node.ram)+' GB';
+  const mo=S.nodes.length*S.node.mo, hr=S.nodes.length*S.node.hr;
+  $('cCost').textContent=`$${mo.toFixed(0)}/mo`;
+  $('nodeHint').textContent=`${S.node.vcore} vCPU · ${S.node.ram}GB · ${S.node.cls} · $${S.node.hr}/hr · ${S.alloc?S.alloc.toFixed(1):'–'}GB alloc.`;
+}
+
+// charts
+function drawLine(cv,series,{max=null,fill=false}={}){
+  const ctx=cv.getContext('2d'), W=cv.width=cv.clientWidth*devicePixelRatio,
+    H=cv.height=cv.clientHeight*devicePixelRatio;
+  ctx.clearRect(0,0,W,H);
+  let mx=max;
+  if(mx===null){ mx=1; for(const s of series) for(const v of s.data) if(v>mx)mx=v; mx*=1.15; }
+  // grid
+  ctx.strokeStyle='#2c3236'; ctx.lineWidth=1;
+  for(let g=0;g<=3;g++){ const y=H-(g/3)*H; ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke(); }
+  ctx.fillStyle='#6b757c'; ctx.font=`${11*devicePixelRatio}px monospace`;
+  ctx.fillText(mx.toFixed(mx<10?1:0),4*devicePixelRatio,12*devicePixelRatio);
+  for(const s of series){
+    const d=s.data,N=d.length; if(N<2)continue;
+    ctx.beginPath();
+    for(let i=0;i<N;i++){ const x=i/(HIST_MAX-1)*W, y=H-Math.min(1,d[i]/mx)*H;
+      i?ctx.lineTo(x,y):ctx.moveTo(x,y); }
+    if(fill){ ctx.lineTo((N-1)/(HIST_MAX-1)*W,H); ctx.lineTo(0,H); ctx.closePath();
+      ctx.fillStyle=s.fill; ctx.fill(); ctx.beginPath();
+      for(let i=0;i<N;i++){ const x=i/(HIST_MAX-1)*W, y=H-Math.min(1,d[i]/mx)*H; i?ctx.lineTo(x,y):ctx.moveTo(x,y);} }
+    ctx.strokeStyle=s.color; ctx.lineWidth=1.6*devicePixelRatio; ctx.stroke();
+  }
+}
+function drawThr(){ drawLine($('chThr'),[
+  {data:S.hist.arr,color:'#9aa4ab'},{data:S.hist.comp,color:'#0ca30c'}]); }
+function drawQ(){ drawLine($('chQ'),[
+  {data:S.hist.q[0],color:'#2a78d6'},{data:S.hist.q[1],color:'#eb6834'},
+  {data:S.hist.q[2],color:'#1baf7a'}]); }
+
+// ---------------------------------------------------------------- log
+function log(msg,type){
+  const l=$('log'); const d=document.createElement('div');
+  d.textContent=`[${fmtTime(S.t)}] ${msg}`;
+  if(type==='w')d.style.color='#f5cf6b'; if(type==='b')d.style.color='#f08a8a'; if(type==='g')d.style.color='#7fd07f';
+  l.appendChild(d); while(l.children.length>40) l.removeChild(l.firstChild);
+}
+
+// ---------------------------------------------------------------- controls
+function initControls(){
+  const nodeSel=$('node');
+  INSTANCES.forEach((it,i)=>{ const o=document.createElement('option');
+    o.value=i; o.textContent=`${it.name} — ${it.ram}GB / ${it.vcore}c — $${it.mo.toFixed(0)}/mo`;
+    if(it===S.node)o.selected=true; nodeSel.appendChild(o); });
+  nodeSel.onchange=e=>{ S.node=INSTANCES[+e.target.value]; buildCluster(); };
+
+  const tc=$('tiers');
+  S.tierCfg.forEach((c,i)=>{
+    const row=document.createElement('div'); row.className='tierrow';
+    row.innerHTML=`<span class="tag"><span class="dot" style="background:${TIER_COLORS[i]}"></span>${c.name}</span>
+      <input type="number" min="0.5" step="0.5" value="${c.ram}" data-tier-ram="${i}">
+      <input type="number" min="0" step="1" value="${c.count}" data-tier-cnt="${i}">`;
+    tc.appendChild(row);
+  });
+  tc.oninput=e=>{
+    const ri=e.target.getAttribute('data-tier-ram'), ci=e.target.getAttribute('data-tier-cnt');
+    if(ri!==null) S.tierCfg[+ri].ram=Math.max(0.5,+e.target.value||0.5);
+    if(ci!==null) S.tierCfg[+ci].count=Math.max(0,Math.floor(+e.target.value||0));
+    buildCluster();
+  };
+
+  bindSlider('speed','speedV',v=>{S.speed=v;return v+'×';});
+  bindSlider('lam','lamV',v=>{S.lambda=v;return v.toFixed(1);});
+  bindSlider('ov','ovV',v=>{S.overhead=v/1000;buildCluster();return v+' MB';});
+  bindSlider('pen','penV',v=>{S.penalty=v;return v.toFixed(1)+'s';});
+  bindSlider('int','intV',v=>{S.intensity=v;return v.toFixed(2);});
+
+  $('run').onclick=()=>{ S.running=!S.running; const b=$('run');
+    b.textContent=S.running?'⏸ Pause':'▶ Start'; b.className=S.running?'stop':'go'; S.lastReal=0; };
+  $('reset').onclick=reset;
+}
+function bindSlider(id,vid,fn){
+  const el=$(id); const upd=()=>{ $(vid).textContent=fn(parseFloat(el.value)); };
+  el.oninput=upd; upd();
+}
+function reset(){
+  S.t=0; S.ctr={arr:0,done:0,fail:0,req:0}; S.lat={n:0,sum:0};
+  S.rate={arr:0,comp:0}; S.hist={arr:[],comp:[],q:[[],[],[]]};
+  $('log').innerHTML=''; buildCluster();
+}
+
+// ---------------------------------------------------------------- go
+initControls();
+buildCluster();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
