@@ -868,7 +868,7 @@ function injectBurst(){
   log(`⚡ injected ${count} reports · ${mn.toFixed(1)}–${mx.toFixed(1)}GB (${dist}) · ${durTxt} → ${S.tiers[ti].name}`,'w');
 }
 function clusterSnapshot(){
-  return { node:S.node.name, nodeRam:S.node.ram, nodes:S.nodes.length,
+  return { node:S.node.name, nodeRam:S.node.ram, nodes:S.nodes.length, hr:S.node.hr,
     tiers:S.tierCfg.map(c=>({name:c.name,ram:c.ram,count:c.count})) };
 }
 function fmtCfg(cfg){
@@ -911,7 +911,7 @@ function renderBatches(){
     const rec=batchDom.get(b.id); if(!rec) return; const f=rec.fields;
     const pending=b.count-b.done-b.failed, complete=(b.done+b.failed>=b.count);
     const elapsed=(complete&&b.last!=null)? b.last : (S.t-b.t0);
-    const clusterHr=S.nodes.length*S.node.hr;
+    const clusterHr=b.cfg? b.cfg.nodes*b.cfg.hr : S.nodes.length*S.node.hr;
     f.done.textContent=b.done;
     f.pending.textContent=pending;
     f.failed.textContent=b.failed; f.failed.style.color=b.failed?'var(--bad)':'';
