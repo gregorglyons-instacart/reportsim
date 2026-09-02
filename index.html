@@ -691,6 +691,7 @@ function fmtLam(l){
   const pd=l*86400, d = pd>=1000? (pd/1000).toFixed(1)+'k' : Math.round(pd);
   return `${s}/s · ${d}/d`;
 }
+function fmtMoney(v){ return '$'+(v<1? v.toFixed(3) : v.toFixed(2)); }
 function fmtRate(r){
   if(!isFinite(r)||r<=0) return '0/hr';
   if(r>=1) return r.toFixed(1)+'/s';
@@ -880,6 +881,8 @@ function renderBatches(){
     const first=b.first!=null? fmtTime(b.first):'–';
     const last=complete&&b.last!=null? fmtTime(b.last) : (pending>0?'running…':'–');
     const avg=b.done? fmtTime(b.sum/b.done):'–';
+    const elapsed=(complete&&b.last!=null)? b.last : (S.t-b.t0);
+    const cost=elapsed/3600 * S.nodes.length*S.node.hr;
     return `<div class="batch">
       <button class="rm" data-batch-x="${b.id}" title="clear batch">×</button>
       <div class="blabel">#${b.id} · ${b.count} rpts<br>
@@ -893,6 +896,7 @@ function renderBatches(){
         ${bcell('last report',last)}
         ${bcell('avg / report',avg)}
         ${bcell('max',b.max?fmtTime(b.max):'–')}
+        ${bcell('cluster cost',fmtMoney(cost))}
       </div>
     </div>`;
   }).join('');
