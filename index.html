@@ -49,9 +49,17 @@
   button:hover{border-color:#4a545a}
   button.go{background:var(--s);border-color:var(--s);color:#fff}
   button.stop{background:var(--bad);border-color:var(--bad);color:#fff}
-  .tierrow{display:grid;grid-template-columns:1fr 56px 56px 22px;gap:6px;align-items:center;
-    margin-bottom:6px}
-  .tierrow .tag{font-weight:600;font-size:11px;display:flex;align-items:center;gap:5px}
+  .tiercard{background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:6px 7px;margin-bottom:6px}
+  .tchead{display:flex;align-items:center;gap:6px}
+  .tchead .tag{flex:1;font-weight:600;font-size:11px;display:flex;align-items:center;gap:5px}
+  .mini{display:flex;align-items:center;gap:3px;font-size:10px;color:var(--muted)}
+  .mini input{width:46px}
+  .tccheck{display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--ink2);margin-top:6px;cursor:pointer}
+  .tccheck input{accent-color:var(--warn);margin:0}
+  .tcrow{display:flex;align-items:center;gap:5px;margin-top:6px;font-size:10px;color:var(--muted);flex-wrap:wrap}
+  .tcrow input{width:42px}
+  .tcrow .cur{margin-left:auto;color:var(--ink2);font-family:var(--mono)}
+  .tcrow .cur b{color:var(--ink);font-weight:700}
   .dot{width:9px;height:9px;border-radius:2px;display:inline-block}
   .hint{color:var(--muted);font-size:10.5px;margin-top:2px}
 
@@ -143,13 +151,12 @@
     </div>
 
     <h2 style="margin-top:14px">Pod tiers <span style="text-transform:none;font-weight:400;color:var(--muted)">(1–6)</span></h2>
-    <div style="display:grid;grid-template-columns:1fr 56px 56px 22px;gap:6px;font-size:10px;color:var(--muted);margin-bottom:3px">
-      <span>tier</span><span>RAM GB</span><span>pods</span><span></span></div>
     <div id="tiers"></div>
     <button id="addTier">+ Add tier</button>
     <div class="hint">Reports start on tier 1 and, on OOM, are killed and restart from
       scratch on the next tier up (all progress lost). List tiers smallest→largest.
-      Usable RAM per pod = size − 100 MB overhead.</div>
+      Usable RAM per pod = size − 100 MB overhead. KEDA polls queue length every 15s;
+      scales up at once, down after 60s stable, and never evicts a busy pod.</div>
 
     <h2 style="margin-top:14px">Model</h2>
     <div class="ctl">
@@ -311,6 +318,8 @@ const INSTANCES = [
 ];
 const TIER_COLORS = ['#2a78d6','#eb6834','#1baf7a','#e87ba4','#eda100','#9085e9'];
 const MAX_TIERS = 6;
+const KEDA_POLL = 15;      // sim seconds between autoscale evaluations
+const KEDA_COOLDOWN = 60;  // sim seconds a scale-down must stay warranted before applying
 const PRESETS = [
   {name:'1× BigY', count:1600,  min:0.1, max:0.2, dist:'uniform', dur:'corr', tier:0},
   {name:'2× BigY', count:3200,  min:0.1, max:0.2, dist:'uniform', dur:'corr', tier:0},
@@ -387,7 +396,11 @@ const S = {
   running:false, t:0, lastReal:0,
   node:INSTANCES[13],               // E8as_v7 (64GB)
   overhead:0.1, intensity:0.3, lambda:0.0303, speed:120,
-  tierCfg:[{name:'T1',ram:2,count:12},{name:'T2',ram:32,count:1}],
+  tierCfg:[
+    {name:'T1',ram:2, count:12, auto:false, min:1, max:24, target:20},
+    {name:'T2',ram:32,count:1,  auto:false, min:1, max:4,  target:2},
+  ],
+  nextScaleT:0,
   tiers:[], nodes:[], pods:[],
   ctr:{arr:0,done:0,fail:0,req:0},
   batches:[], batchNo:0,
@@ -400,6 +413,8 @@ const HIST_MAX=200;
 let podUID=0;
 
 function buildCluster(){
+  // keep autoscaled tiers within their replica bounds
+  S.tierCfg.forEach(c=>{ if(c.auto) c.count=Math.min(c.max,Math.max(c.min,c.count)); });
   // collect running reports to re-queue (preserve progress)
   const inflight=[];
   for(const p of S.pods) if(p.report){ p.report.state='queued'; inflight.push(p.report); p.report=null; }
@@ -438,17 +453,50 @@ function buildCluster(){
 
   buildNodeDOM(); buildTierDOM(); renderClusterStats(); renderCurve(); renderQLegend(); renderBurstTiers();
 }
+function maybeScale(){
+  if(S.t < S.nextScaleT) return;
+  S.nextScaleT = S.t + KEDA_POLL;
+  let changed=false;
+  S.tierCfg.forEach((c,i)=>{
+    if(!c.auto){ c._belowSince=null; return; }
+    const t=S.tiers[i]; if(!t) return;
+    const busy=t.pods.filter(p=>p.report&&p.sched).length;
+    // KEDA queue-length trigger: replicas = ceil(queue / target), bounded, never below busy
+    let desired=Math.min(c.max, Math.max(c.min, Math.ceil(t.queue.length/Math.max(1,c.target))));
+    desired=Math.max(desired, Math.min(busy,c.max));
+    if(desired>c.count){ c.count=desired; c._belowSince=null; changed=true; }
+    else if(desired<c.count){
+      if(c._belowSince==null) c._belowSince=S.t;
+      if(S.t-c._belowSince>=KEDA_COOLDOWN){ c.count=desired; c._belowSince=null; changed=true; }
+    } else c._belowSince=null;
+  });
+  if(changed) buildCluster();
+}
 function normalizeTierNames(){ S.tierCfg.forEach((c,i)=>c.name='T'+(i+1)); }
 function renderTierConfig(){
   const tc=$('tiers'); tc.innerHTML='';
   const canRemove=S.tierCfg.length>1;
   S.tierCfg.forEach((c,i)=>{
-    const row=document.createElement('div'); row.className='tierrow';
-    row.innerHTML=`<span class="tag"><span class="dot" style="background:${TIER_COLORS[i]}"></span>${c.name}</span>
-      <input type="number" min="0.5" step="0.5" value="${c.ram}" data-tier-ram="${i}">
-      <input type="number" min="0" step="1" value="${c.count}" data-tier-cnt="${i}">
-      <button class="rm" data-tier-rm="${i}" title="remove tier"${canRemove?'':' disabled'}>×</button>`;
-    tc.appendChild(row);
+    const card=document.createElement('div'); card.className='tiercard';
+    const body = c.auto ? `
+      <div class="tcrow">
+        <span>min</span><input type="number" min="0" step="1" value="${c.min}" data-i="${i}" data-k="min">
+        <span>max</span><input type="number" min="1" step="1" value="${c.max}" data-i="${i}" data-k="max">
+        <span>target q/pod</span><input type="number" min="1" step="1" value="${c.target}" data-i="${i}" data-k="target">
+        <span class="cur">→ <b data-cur="${i}">${c.count}</b> pods</span>
+      </div>`
+    : `
+      <div class="tcrow"><span>pods</span>
+        <input type="number" min="0" step="1" value="${c.count}" data-i="${i}" data-k="count"></div>`;
+    card.innerHTML=`
+      <div class="tchead">
+        <span class="tag"><span class="dot" style="background:${TIER_COLORS[i]}"></span>${c.name}</span>
+        <label class="mini">RAM<input type="number" min="0.5" step="0.5" value="${c.ram}" data-i="${i}" data-k="ram"></label>
+        <button class="rm" data-tier-rm="${i}" title="remove tier"${canRemove?'':' disabled'}>×</button>
+      </div>
+      <label class="tccheck"><input type="checkbox" data-i="${i}" data-k="auto"${c.auto?' checked':''}> KEDA autoscale on queue length</label>
+      ${body}`;
+    tc.appendChild(card);
   });
   $('addTier').style.display = S.tierCfg.length>=MAX_TIERS? 'none':'';
 }
@@ -532,6 +580,7 @@ function frame(now){
     const inst_arr=arr/simDt, inst_comp=comp/simDt;
     S.rate.arr=S.rate.arr*0.85+inst_arr*0.15;
     S.rate.comp=S.rate.comp*0.85+inst_comp*0.15;
+    maybeScale();
   }
   renderThrottled(now);
   requestAnimationFrame(frame);
@@ -566,8 +615,10 @@ function buildTierDOM(){
   const host=$('tierPanels'); host.innerHTML='';
   S.tiers.forEach((t,i)=>{
     const el=document.createElement('div'); el.className='tp';
+    const c=S.tierCfg[i];
+    const badge=c.auto?` <span style="color:var(--warn);font-weight:600">⇅${c.min}–${c.max}</span>`:'';
     el.innerHTML=`<div class="th"><span class="tname"><span class="dot" style="background:${t.color}"></span>
-      Tier ${t.name} · ${t.ram}GB</span><span class="num" style="font-size:11px;color:var(--ink2)"
+      Tier ${t.name} · ${t.ram}GB${badge}</span><span class="num" style="font-size:11px;color:var(--ink2)"
       data-t="cap${i}"></span></div>
       <div class="tstat"><span>running</span><b class="num" data-t="run${i}">0</b></div>
       <div class="bar"><div data-t="util${i}" style="background:${t.color};width:0%"></div></div>
@@ -593,6 +644,7 @@ function renderThrottled(now){
     setT(`done${i}`,t.done); setT(`oom${i}`,t.oom); setT(`cap${i}`,`${run}/${sc} busy`);
     setW(`util${i}`, sc? run/sc*100:0);
     setW(`qbar${i}`, Math.min(100, t.queue.length/ Math.max(1,sc) *100/3));
+    if(S.tierCfg[i] && S.tierCfg[i].auto){ const cur=document.querySelector(`[data-cur="${i}"]`); if(cur) cur.textContent=S.tierCfg[i].count; }
   });
   const util=cap? running/cap*100:0;
   $('kIn').textContent=fmt(queued+running);
@@ -729,9 +781,21 @@ function initControls(){
   normalizeTierNames(); renderTierConfig();
   const tc=$('tiers');
   tc.oninput=e=>{
-    const ri=e.target.getAttribute('data-tier-ram'), ci=e.target.getAttribute('data-tier-cnt');
-    if(ri!==null) S.tierCfg[+ri].ram=Math.max(0.5,+e.target.value||0.5);
-    if(ci!==null) S.tierCfg[+ci].count=Math.max(0,Math.floor(+e.target.value||0));
+    const t=e.target, di=t.getAttribute('data-i'), k=t.getAttribute('data-k');
+    if(di===null||!k) return;
+    const c=S.tierCfg[+di];
+    if(k==='auto'){
+      c.auto=t.checked;
+      if(c.auto) c.count=Math.min(c.max,Math.max(c.min,c.count));
+      c._belowSince=null;
+      renderTierConfig(); buildCluster(); return;
+    }
+    const v=+t.value;
+    if(k==='ram')    c.ram=Math.max(0.5,v||0.5);
+    if(k==='count')  c.count=Math.max(0,Math.floor(v||0));
+    if(k==='min')    c.min=Math.max(0,Math.floor(v||0));
+    if(k==='max')    c.max=Math.max(1,Math.floor(v||1));
+    if(k==='target') c.target=Math.max(1,Math.floor(v||1));
     buildCluster();
   };
   tc.onclick=e=>{
@@ -743,7 +807,7 @@ function initControls(){
   $('addTier').onclick=()=>{
     if(S.tierCfg.length>=MAX_TIERS) return;
     const maxRam=Math.max(...S.tierCfg.map(c=>c.ram));
-    S.tierCfg.push({name:'',ram:Math.round(maxRam*2),count:1});
+    S.tierCfg.push({name:'',ram:Math.round(maxRam*2),count:1,auto:false,min:1,max:8,target:20});
     normalizeTierNames(); renderTierConfig(); buildCluster();
   };
 
@@ -780,7 +844,8 @@ function bindSlider(id,vid,fn){
 function reset(){
   S.t=0; S.ctr={arr:0,done:0,fail:0,req:0}; S.lat={n:0,sum:0};
   S.rate={arr:0,comp:0}; S.hist={arr:[],comp:[],q:[[],[],[]]};
-  S.batches=[]; S.batchNo=0;
+  S.batches=[]; S.batchNo=0; S.nextScaleT=0;
+  S.tierCfg.forEach(c=>c._belowSince=null);
   $('log').innerHTML=''; buildCluster(); renderBatches();
 }
 function setVal(id,v){ const e=$(id); e.value=v; e.dispatchEvent(new Event('input')); }
