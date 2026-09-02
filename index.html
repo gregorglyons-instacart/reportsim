@@ -153,8 +153,7 @@
     <button id="addTier">+ Add tier</button>
     <div class="hint">Reports start on tier 1 and, on OOM, are killed and restart from
       scratch on the next tier up (all progress lost). List tiers smallest→largest.
-      Usable RAM per pod = size − 100 MB overhead. KEDA polls queue length every 15s;
-      scales up at once, down after 60s stable, never evicting a busy pod. Set min = max to pin a tier.</div>
+      Usable RAM per pod = size − 100 MB overhead.</div>
 
     <h2 style="margin-top:14px">Model</h2>
     <div class="ctl">
@@ -318,6 +317,7 @@ const TIER_COLORS = ['#2a78d6','#eb6834','#1baf7a','#e87ba4','#eda100','#9085e9'
 const MAX_TIERS = 6;
 const KEDA_POLL = 15;      // sim seconds between autoscale evaluations
 const KEDA_COOLDOWN = 60;  // sim seconds a scale-down must stay warranted before applying
+const SHOW_KEDA = false;   // show per-tier min/max/target autoscale controls (else a plain pods input)
 const PRESETS = [
   {name:'1× BigY', count:1600,  min:0.1, max:1.5, dist:'uniform', dur:'corr', tier:0},
   {name:'2× BigY', count:3200,  min:0.1, max:1.5, dist:'uniform', dur:'corr', tier:0},
@@ -475,18 +475,23 @@ function renderTierConfig(){
   const canRemove=S.tierCfg.length>1;
   S.tierCfg.forEach((c,i)=>{
     const card=document.createElement('div'); card.className='tiercard';
+    const scaleRow = SHOW_KEDA ? `
+      <div class="tcrow">
+        <span>min</span><input type="number" min="0" step="1" value="${c.min}" data-i="${i}" data-k="min">
+        <span>max</span><input type="number" min="1" step="1" value="${c.max}" data-i="${i}" data-k="max">
+        <span>target q/pod</span><input type="number" min="1" step="1" value="${c.target}" data-i="${i}" data-k="target">
+        <span class="cur">→ <b data-cur="${i}">${c.count}</b> pods</span>
+      </div>`
+    : `
+      <div class="tcrow"><span>pods</span>
+        <input type="number" min="0" step="1" value="${c.count}" data-i="${i}" data-k="pods"></div>`;
     card.innerHTML=`
       <div class="tchead">
         <span class="tag"><span class="dot" style="background:${TIER_COLORS[i]}"></span>${c.name}</span>
         <label class="mini">RAM<input type="number" min="0.5" step="0.5" value="${c.ram}" data-i="${i}" data-k="ram"></label>
         <button class="rm" data-tier-rm="${i}" title="remove tier"${canRemove?'':' disabled'}>×</button>
       </div>
-      <div class="tcrow">
-        <span>min</span><input type="number" min="0" step="1" value="${c.min}" data-i="${i}" data-k="min">
-        <span>max</span><input type="number" min="1" step="1" value="${c.max}" data-i="${i}" data-k="max">
-        <span>target q/pod</span><input type="number" min="1" step="1" value="${c.target}" data-i="${i}" data-k="target">
-        <span class="cur">→ <b data-cur="${i}">${c.count}</b> pods</span>
-      </div>`;
+      ${scaleRow}`;
     tc.appendChild(card);
   });
   $('addTier').style.display = S.tierCfg.length>=MAX_TIERS? 'none':'';
@@ -778,6 +783,7 @@ function initControls(){
     const c=S.tierCfg[+di];
     const v=+t.value;
     if(k==='ram')    c.ram=Math.max(0.5,v||0.5);
+    if(k==='pods'){ const n=Math.max(0,Math.floor(v||0)); c.count=n; c.min=n; c.max=n; }
     if(k==='min')    c.min=Math.max(0,Math.floor(v||0));
     if(k==='max')    c.max=Math.max(1,Math.floor(v||1));
     if(k==='target') c.target=Math.max(1,Math.floor(v||1));
