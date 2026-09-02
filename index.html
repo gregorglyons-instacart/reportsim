@@ -923,7 +923,7 @@ function renderBatches(){
     f.max.textContent=b.max? fmtTime(b.max):'–';
     f.cost.textContent=fmtMoney(elapsed/3600*clusterHr);
     f.prewarm.textContent=fmtMoney(0.5*clusterHr);
-    if(b.lastTier!=null){
+    if(complete&&b.lastTier!=null){
       const cfgT=b.cfg&&b.cfg.tiers[b.lastTier], liveT=S.tiers[b.lastTier];
       f.finaltier.textContent=cfgT?cfgT.name:(liveT?liveT.name:'T'+(b.lastTier+1));
       f.finaltier.style.color=TIER_COLORS[b.lastTier]||'';
