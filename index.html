@@ -908,6 +908,8 @@ function renderBatches(){
 // ---------------------------------------------------------------- go
 initControls();
 buildCluster();
+S.running=true; S.lastReal=0;
+{ const b=$('run'); b.textContent='⏸ Pause'; b.className='stop'; }
 requestAnimationFrame(frame);
 </script>
 </body>
