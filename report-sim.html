@@ -125,13 +125,10 @@
       <span>tier</span><span>RAM GB</span><span>pods</span></div>
     <div id="tiers"></div>
     <div class="hint">Reports start on the smallest tier. On OOM they are killed and
-      restart from scratch one tier up (all progress lost).</div>
+      restart from scratch one tier up (all progress lost). Usable RAM per pod =
+      size − 100 MB overhead.</div>
 
     <h2 style="margin-top:14px">Model</h2>
-    <div class="ctl">
-      <label><span>Pod overhead (reserved)</span><span class="v num" id="ovV">50 MB</span></label>
-      <input type="range" id="ov" min="0" max="500" step="10" value="50">
-    </div>
     <div class="ctl">
       <label><span>Workload intensity</span><span class="v num" id="intV">0.30</span></label>
       <input type="range" id="int" min="0" max="1" step="0.05" value="0.3">
@@ -288,7 +285,7 @@ function kubeReservedGB(ramGB){
 const S = {
   running:false, t:0, lastReal:0,
   node:INSTANCES[13],               // E8as_v7 (64GB)
-  overhead:0.05, intensity:0.3, lambda:5, speed:60,
+  overhead:0.1, intensity:0.3, lambda:5, speed:60,
   tierCfg:[{name:'S',ram:2,count:20},{name:'M',ram:8,count:4},{name:'L',ram:32,count:2}],
   tiers:[], nodes:[], pods:[],
   ctr:{arr:0,done:0,fail:0,req:0},
@@ -583,7 +580,6 @@ function initControls(){
 
   bindSlider('speed','speedV',v=>{S.speed=v;return v+'×';});
   bindSlider('lam','lamV',v=>{S.lambda=v;return v.toFixed(1);});
-  bindSlider('ov','ovV',v=>{S.overhead=v/1000;buildCluster();return v+' MB';});
   bindSlider('int','intV',v=>{S.intensity=v;return v.toFixed(2);});
 
   $('run').onclick=()=>{ S.running=!S.running; const b=$('run');
