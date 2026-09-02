@@ -109,13 +109,13 @@
     <div class="sp"></div>
     <div style="min-width:150px">
       <label style="display:flex;justify-content:space-between;font-size:11px;color:var(--ink2)">
-        <span>Sim speed</span><span class="v num" id="speedV">60×</span></label>
-      <input type="range" id="speed" min="1" max="600" step="1" value="60">
+        <span>Sim speed</span><span class="v num" id="speedV">120×</span></label>
+      <input type="range" id="speed" min="1" max="600" step="1" value="120">
     </div>
-    <div style="min-width:150px">
+    <div style="min-width:196px">
       <label style="display:flex;justify-content:space-between;font-size:11px;color:var(--ink2)">
-        <span>Load (reports/s)</span><span class="v num" id="lamV">5.0</span></label>
-      <input type="range" id="lam" min="0" max="80" step="0.5" value="5">
+        <span>Load</span><span class="v num" id="lamV"></span></label>
+      <input type="range" id="lam" min="0" max="1000" step="1" value="259">
     </div>
     <div class="num" style="color:var(--ink2);font-size:11px">elapsed&nbsp;<span id="clock" style="color:var(--ink)">0.0s</span></div>
   </div>
@@ -166,7 +166,7 @@
       <div class="kpi"><div class="k">In system</div><div class="val num" id="kIn">0</div><div class="sub">queued + running</div></div>
       <div class="kpi"><div class="k">Queued</div><div class="val num" id="kQ">0</div><div class="sub">waiting</div></div>
       <div class="kpi"><div class="k">Running</div><div class="val num" id="kRun">0</div><div class="sub" id="kUtil">0% util</div></div>
-      <div class="kpi"><div class="k">Throughput</div><div class="val num" id="kThr">0</div><div class="sub">reports/s</div></div>
+      <div class="kpi"><div class="k">Throughput</div><div class="val num" id="kThr">0</div><div class="sub">completed</div></div>
       <div class="kpi"><div class="k">Completed</div><div class="val num" id="kDone">0</div><div class="sub" id="kLat">– avg</div></div>
       <div class="kpi"><div class="k">Escalations</div><div class="val num" id="kReq" style="color:var(--warn)">0</div><div class="sub">OOM checkpoints</div></div>
       <div class="kpi"><div class="k">Failed</div><div class="val num" id="kFail" style="color:var(--bad)">0</div><div class="sub">no pod fits</div></div>
@@ -299,8 +299,8 @@ function kubeReservedGB(ramGB){
 const S = {
   running:false, t:0, lastReal:0,
   node:INSTANCES[13],               // E8as_v7 (64GB)
-  overhead:0.1, intensity:0.3, lambda:5, speed:60,
-  tierCfg:[{name:'T1',ram:2,count:20},{name:'T2',ram:8,count:4},{name:'T3',ram:32,count:2}],
+  overhead:0.1, intensity:0.3, lambda:0.0303, speed:120,
+  tierCfg:[{name:'T1',ram:2,count:4},{name:'T2',ram:8,count:2},{name:'T3',ram:32,count:1}],
   tiers:[], nodes:[], pods:[],
   ctr:{arr:0,done:0,fail:0,req:0},
   lat:{n:0,sum:0},
@@ -502,7 +502,7 @@ function renderThrottled(now){
   $('kQ').textContent=fmt(queued);
   $('kRun').textContent=fmt(running);
   $('kUtil').textContent=util.toFixed(0)+'% util';
-  $('kThr').textContent=S.rate.comp.toFixed(1);
+  $('kThr').textContent=fmtRate(S.rate.comp);
   $('kDone').textContent=fmt(S.ctr.done);
   $('kLat').textContent=S.lat.n? (S.lat.sum/S.lat.n).toFixed(1)+'s avg':'– avg';
   $('kReq').textContent=fmt(S.ctr.req);
@@ -535,6 +535,19 @@ function setW(k,v){ const e=document.querySelector(`[data-t="${k}"]`); if(e)e.st
 function push(a,v){ a.push(v); if(a.length>HIST_MAX)a.shift(); }
 function fmt(n){ return n>=10000? (n/1000).toFixed(1)+'k': (''+Math.round(n)); }
 function fmtTime(s){ if(s<90)return s.toFixed(1)+'s'; if(s<5400)return (s/60).toFixed(1)+'m'; if(s<86400)return (s/3600).toFixed(2)+'h'; return (s/86400).toFixed(2)+'d'; }
+const LAM_MIN=0.005, LAM_MAX=5, LAM_N=1000;
+function posToLam(p){ return LAM_MIN*Math.pow(LAM_MAX/LAM_MIN, p/LAM_N); }
+function lamToPos(l){ return Math.round(LAM_N*Math.log(l/LAM_MIN)/Math.log(LAM_MAX/LAM_MIN)); }
+function fmtLam(l){
+  const s = l<0.1? l.toFixed(3) : l<1? l.toFixed(2) : l.toFixed(1);
+  const pd=l*86400, d = pd>=1000? (pd/1000).toFixed(1)+'k' : Math.round(pd);
+  return `${s}/s · ${d}/d`;
+}
+function fmtRate(r){
+  if(r>=1) return r.toFixed(1)+'/s';
+  if(r*60>=1) return (r*60).toFixed(1)+'/min';
+  return (r*3600).toFixed(0)+'/hr';
+}
 function fmtElapsed(s){
   const d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60),sec=Math.floor(s%60);
   if(d>0)return `${d}d ${h}h ${m}m`;
@@ -581,7 +594,7 @@ function drawLine(cv,series,{max=null,fill=false}={}){
   ctx.strokeStyle='#2c3236'; ctx.lineWidth=1;
   for(let g=0;g<=3;g++){ const y=H-(g/3)*H; ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke(); }
   ctx.fillStyle='#6b757c'; ctx.font=`${11*devicePixelRatio}px monospace`;
-  ctx.fillText(mx.toFixed(mx<10?1:0),4*devicePixelRatio,12*devicePixelRatio);
+  ctx.fillText(mx.toFixed(mx<1?2:mx<10?1:0),4*devicePixelRatio,12*devicePixelRatio);
   for(const s of series){
     const d=s.data,N=d.length; if(N<2)continue;
     ctx.beginPath();
@@ -635,7 +648,9 @@ function initControls(){
   };
 
   bindSlider('speed','speedV',v=>{S.speed=v;return v+'×';});
-  bindSlider('lam','lamV',v=>{S.lambda=v;return v.toFixed(1);});
+  const lamEl=$('lam');
+  const updLam=()=>{ S.lambda=posToLam(+lamEl.value); $('lamV').textContent=fmtLam(S.lambda); };
+  lamEl.value=lamToPos(S.lambda); lamEl.oninput=updLam; updLam();
   bindSlider('int','intV',v=>{S.intensity=v;renderCurve();return v.toFixed(2);});
 
   $('run').onclick=()=>{ S.running=!S.running; const b=$('run');
