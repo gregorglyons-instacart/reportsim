@@ -124,17 +124,13 @@
     <div style="display:grid;grid-template-columns:1fr 62px 62px;gap:6px;font-size:10px;color:var(--muted);margin-bottom:3px">
       <span>tier</span><span>RAM GB</span><span>pods</span></div>
     <div id="tiers"></div>
-    <div class="hint">Reports start on the smallest tier. On OOM they checkpoint and
-      escalate one tier up.</div>
+    <div class="hint">Reports start on the smallest tier. On OOM they are killed and
+      restart from scratch one tier up (all progress lost).</div>
 
     <h2 style="margin-top:14px">Model</h2>
     <div class="ctl">
       <label><span>Pod overhead (reserved)</span><span class="v num" id="ovV">50 MB</span></label>
       <input type="range" id="ov" min="0" max="500" step="10" value="50">
-    </div>
-    <div class="ctl">
-      <label><span>Checkpoint+restore penalty</span><span class="v num" id="penV">3.0s</span></label>
-      <input type="range" id="pen" min="0" max="30" step="0.5" value="3">
     </div>
     <div class="ctl">
       <label><span>Workload intensity</span><span class="v num" id="intV">0.30</span></label>
@@ -292,7 +288,7 @@ function kubeReservedGB(ramGB){
 const S = {
   running:false, t:0, lastReal:0,
   node:INSTANCES[13],               // E8as_v7 (64GB)
-  overhead:0.05, penalty:3, intensity:0.3, lambda:5, speed:60,
+  overhead:0.05, intensity:0.3, lambda:5, speed:60,
   tierCfg:[{name:'S',ram:2,count:20},{name:'M',ram:8,count:4},{name:'L',ram:32,count:2}],
   tiers:[], nodes:[], pods:[],
   ctr:{arr:0,done:0,fail:0,req:0},
@@ -348,7 +344,7 @@ function stepSim(dt){
   const n=poisson(S.lambda*dt);
   for(let i=0;i<Math.min(n,8000);i++){
     S.tiers[0].queue.push({id:++S.ctr.arr,peak:0,dur:0,progress:0,tier:0,
-      state:'queued',arrT:S.t,restore:0,_init:false});
+      state:'queued',arrT:S.t,_init:false});
     S.arrCount++;
   }
 
@@ -357,17 +353,17 @@ function stepSim(dt){
   for(const pod of S.pods){
     const r=pod.report; if(!r) continue;
     if(!r._init){ const s=sampleReport(S.intensity); r.peak=s.peak; r.dur=s.dur; r._init=true; }
-    if(r.restore>0){ r.restore-=dt; if(r.restore<0) r.restore=0; continue; }
     r.progress += dt / r.dur;
     const curMem = r.peak * Math.min(1,r.progress);
     if(curMem > pod.usable && r.progress < 1){
-      // OOM: checkpoint + escalate
+      // exceeded RAM budget: kill and restart from scratch on a larger tier
       pod.report=null;
       S.ctr.req++; S.tiers[pod.tier].oom++;
+      const wasted=r.progress;
       if(r.tier+1 < S.tiers.length){
-        r.tier++; r.restore=S.penalty; r.state='queued';
+        r.tier++; r.progress=0; r.state='queued';
         S.tiers[r.tier].queue.unshift(r);
-        if(r.peak>6) log(`#${r.id} OOM on ${S.tiers[pod.tier].name} @${(r.peak).toFixed(1)}GB → escalate to ${S.tiers[r.tier].name} (${(r.progress*100).toFixed(0)}% saved)`,'w');
+        if(r.peak>6) log(`#${r.id} OOM on ${S.tiers[pod.tier].name} @${r.peak.toFixed(1)}GB → restart on ${S.tiers[r.tier].name} (${(wasted*100).toFixed(0)}% work lost)`,'w');
       } else {
         r.state='failed'; S.ctr.fail++;
         log(`#${r.id} FAILED — needs ${r.peak.toFixed(1)}GB, largest pod ${S.tiers[r.tier].usable.toFixed(1)}GB`,'b');
@@ -489,7 +485,6 @@ function renderThrottled(now){
     if(r){
       const cur=r.peak*Math.min(1,r.progress);
       pod.fill.style.height=Math.min(100,cur/pod.ram*100)+'%';
-      pod.fill.style.opacity = r.restore>0? .35:1;
       pod.el.classList.add('run');
     } else { pod.fill.style.height='0%'; pod.el.classList.remove('run'); }
   }
@@ -582,7 +577,6 @@ function initControls(){
   bindSlider('speed','speedV',v=>{S.speed=v;return v+'×';});
   bindSlider('lam','lamV',v=>{S.lambda=v;return v.toFixed(1);});
   bindSlider('ov','ovV',v=>{S.overhead=v/1000;buildCluster();return v+' MB';});
-  bindSlider('pen','penV',v=>{S.penalty=v;return v.toFixed(1)+'s';});
   bindSlider('int','intV',v=>{S.intensity=v;return v.toFixed(2);});
 
   $('run').onclick=()=>{ S.running=!S.running; const b=$('run');
