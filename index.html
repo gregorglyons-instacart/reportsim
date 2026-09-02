@@ -882,7 +882,9 @@ function renderBatches(){
     const last=complete&&b.last!=null? fmtTime(b.last) : (pending>0?'running…':'–');
     const avg=b.done? fmtTime(b.sum/b.done):'–';
     const elapsed=(complete&&b.last!=null)? b.last : (S.t-b.t0);
-    const cost=elapsed/3600 * S.nodes.length*S.node.hr;
+    const clusterHr=S.nodes.length*S.node.hr;
+    const cost=elapsed/3600*clusterHr;
+    const prewarm=0.5*clusterHr; // 30 min of cluster runtime for pod setup
     return `<div class="batch">
       <button class="rm" data-batch-x="${b.id}" title="clear batch">×</button>
       <div class="blabel">#${b.id} · ${b.count} rpts<br>
@@ -897,6 +899,7 @@ function renderBatches(){
         ${bcell('avg / report',avg)}
         ${bcell('max',b.max?fmtTime(b.max):'–')}
         ${bcell('cluster cost',fmtMoney(cost))}
+        ${bcell('pre-warm',fmtMoney(prewarm))}
       </div>
     </div>`;
   }).join('');
