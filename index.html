@@ -126,13 +126,13 @@
     <div class="sp"></div>
     <div style="min-width:150px">
       <label style="display:flex;justify-content:space-between;font-size:11px;color:var(--ink2)">
-        <span>Sim speed</span><span class="v num" id="speedV">120×</span></label>
-      <input type="range" id="speed" min="1" max="600" step="1" value="120">
+        <span>Sim speed</span><span class="v num" id="speedV">1×</span></label>
+      <input type="range" id="speed" min="1" max="600" step="1" value="1">
     </div>
     <div style="min-width:196px">
       <label style="display:flex;justify-content:space-between;font-size:11px;color:var(--ink2)">
         <span>Load</span><span class="v num" id="lamV"></span></label>
-      <input type="range" id="lam" min="0" max="1000" step="1" value="259">
+      <input type="range" id="lam" min="0" max="1000" step="1" value="0">
     </div>
     <div class="num" style="color:var(--ink2);font-size:11px">elapsed&nbsp;<span id="clock" style="color:var(--ink)">0.0s</span></div>
   </div>
@@ -393,7 +393,7 @@ function kubeReservedGB(ramGB){
 const S = {
   running:false, t:0, lastReal:0,
   node:INSTANCES[13],               // E8as_v7 (64GB)
-  overhead:0.1, intensity:0.3, lambda:0.0303, speed:120,
+  overhead:0.1, intensity:0.3, lambda:0, speed:1,
   tierCfg:[
     {name:'T1',ram:2, count:12, min:12, max:12, target:20},
     {name:'T2',ram:32,count:1,  min:1,  max:1,  target:2},
@@ -678,9 +678,10 @@ function push(a,v){ a.push(v); if(a.length>HIST_MAX)a.shift(); }
 function fmt(n){ return n>=10000? (n/1000).toFixed(1)+'k': (''+Math.round(n)); }
 function fmtTime(s){ if(s<90)return s.toFixed(1)+'s'; if(s<5400)return (s/60).toFixed(1)+'m'; if(s<86400)return (s/3600).toFixed(2)+'h'; return (s/86400).toFixed(2)+'d'; }
 const LAM_MIN=0.005, LAM_MAX=5, LAM_N=1000;
-function posToLam(p){ return LAM_MIN*Math.pow(LAM_MAX/LAM_MIN, p/LAM_N); }
-function lamToPos(l){ return Math.round(LAM_N*Math.log(l/LAM_MIN)/Math.log(LAM_MAX/LAM_MIN)); }
+function posToLam(p){ return p<=0? 0 : LAM_MIN*Math.pow(LAM_MAX/LAM_MIN,(p-1)/(LAM_N-1)); }
+function lamToPos(l){ return l<=0? 0 : Math.round(1+(LAM_N-1)*Math.log(l/LAM_MIN)/Math.log(LAM_MAX/LAM_MIN)); }
 function fmtLam(l){
+  if(l<=0) return '0/s (off)';
   const s = l<0.1? l.toFixed(3) : l<1? l.toFixed(2) : l.toFixed(1);
   const pd=l*86400, d = pd>=1000? (pd/1000).toFixed(1)+'k' : Math.round(pd);
   return `${s}/s · ${d}/d`;
