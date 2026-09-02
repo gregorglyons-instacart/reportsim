@@ -77,6 +77,10 @@
   .tstat{display:flex;justify-content:space-between;font-family:var(--mono);
     font-size:11px;color:var(--ink2);font-variant-numeric:tabular-nums}
   .tstat b{color:var(--ink);font-weight:600}
+  table.curve{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px;margin-top:4px}
+  table.curve th{color:var(--muted);text-align:right;font-weight:500;padding:2px 4px;font-size:10px}
+  table.curve td{text-align:right;padding:2px 5px;font-variant-numeric:tabular-nums;border-top:1px solid var(--line)}
+  table.curve td.tier{text-align:center;font-weight:700}
 
   canvas{width:100%;height:150px;display:block}
   .warn{background:#3a2a08;border:1px solid var(--warn);color:#f5cf6b;padding:6px 9px;
@@ -140,6 +144,11 @@
     <div class="tstat"><span>pods (sched / req)</span><b class="num" id="cPods">–</b></div>
     <div class="tstat"><span>cluster RAM</span><b class="num" id="cRam">–</b></div>
     <div class="tstat"><span>est. cost</span><b class="num" id="cCost">–</b></div>
+
+    <h2 style="margin-top:14px">Memory curve
+      <span style="text-transform:none;font-weight:400;color:var(--muted)">@ intensity <span id="curveInt">0.30</span></span></h2>
+    <table class="curve" id="curve"></table>
+    <div class="hint">Peak GB per report percentile, and the smallest pod tier that fits it.</div>
   </div>
 
   <!-- RIGHT: dashboard -->
@@ -331,7 +340,7 @@ function buildCluster(){
     pod.sched=true;
   }
   S.alloc=alloc; S.unsched=unsched;
-  buildNodeDOM(); buildTierDOM(); renderClusterStats();
+  buildNodeDOM(); buildTierDOM(); renderClusterStats(); renderCurve();
 }
 
 // ---------------------------------------------------------------- sim step
@@ -518,6 +527,23 @@ function renderClusterStats(){
   $('nodeHint').textContent=`${S.node.vcore} vCPU · ${S.node.ram}GB · ${S.node.cls} · $${S.node.hr}/hr · ${S.alloc?S.alloc.toFixed(1):'–'}GB alloc.`;
 }
 
+function renderCurve(){
+  const el=$('curve'); if(!el) return;
+  $('curveInt').textContent=S.intensity.toFixed(2);
+  if(!S.tiers.length){ el.innerHTML=''; return; }
+  const ps=[50,90,95,98,99,99.5,99.9,100];
+  let h='<tr><th>pct</th><th>peak GB</th><th style="text-align:center">lands on</th></tr>';
+  for(const p of ps){
+    const mem=interpMem(p,S.intensity);
+    let fit=null;
+    for(const t of S.tiers){ if(t.usable>=mem){fit=t;break;} }
+    const cell=fit? `<td class="tier" style="color:${fit.color}">${fit.name}</td>`
+                  : `<td class="tier" style="color:var(--bad)">✗ fail</td>`;
+    h+=`<tr><td>p${p}</td><td>${mem.toFixed(2)}</td>${cell}</tr>`;
+  }
+  el.innerHTML=h;
+}
+
 // charts
 function drawLine(cv,series,{max=null,fill=false}={}){
   const ctx=cv.getContext('2d'), W=cv.width=cv.clientWidth*devicePixelRatio,
@@ -580,7 +606,7 @@ function initControls(){
 
   bindSlider('speed','speedV',v=>{S.speed=v;return v+'×';});
   bindSlider('lam','lamV',v=>{S.lambda=v;return v.toFixed(1);});
-  bindSlider('int','intV',v=>{S.intensity=v;return v.toFixed(2);});
+  bindSlider('int','intV',v=>{S.intensity=v;renderCurve();return v.toFixed(2);});
 
   $('run').onclick=()=>{ S.running=!S.running; const b=$('run');
     b.textContent=S.running?'⏸ Pause':'▶ Start'; b.className=S.running?'stop':'go'; S.lastReal=0; };
