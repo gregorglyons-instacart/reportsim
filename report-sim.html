@@ -24,6 +24,14 @@
   .col{display:flex;flex-direction:column;gap:10px;min-width:0}
   .preset{font-size:11px;padding:4px 8px;font-weight:500}
   .preset:hover{border-color:var(--warn);color:var(--warn)}
+  #batches{display:flex;flex-direction:column;gap:6px}
+  .batch{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:var(--panel2);
+    border:1px solid var(--line);border-radius:5px;padding:7px 9px}
+  .batch .blabel{font-family:var(--mono);font-size:11px;color:var(--ink);min-width:150px;font-weight:600;line-height:1.3}
+  .bstats{display:flex;gap:16px;flex-wrap:wrap}
+  .bstats>div{display:flex;flex-direction:column;line-height:1.25}
+  .bstats span{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+  .bstats b{font-family:var(--mono);font-size:12.5px;font-variant-numeric:tabular-nums}
   .top{grid-column:1/3;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
   .num{font-variant-numeric:tabular-nums;font-family:var(--mono)}
 
@@ -251,6 +259,12 @@
       <h2>Event log</h2>
       <div id="log"></div>
     </div>
+
+    <div class="panel" style="margin-top:10px">
+      <h2>Batch results</h2>
+      <div id="batches"></div>
+      <div class="hint" id="batchEmpty">Inject a burst to track its completion stats here.</div>
+    </div>
   </div>
 </div>
 
@@ -376,6 +390,7 @@ const S = {
   tierCfg:[{name:'T1',ram:2,count:12},{name:'T2',ram:32,count:1}],
   tiers:[], nodes:[], pods:[],
   ctr:{arr:0,done:0,fail:0,req:0},
+  batches:[], batchNo:0,
   lat:{n:0,sum:0},
   rate:{arr:0,comp:0},
   hist:{arr:[],comp:[],q:[[],[],[]]},
@@ -474,14 +489,17 @@ function stepSim(dt){
       if(r.tier+1 < S.tiers.length){
         r.tier++; r.progress=0; r.state='queued';
         S.tiers[r.tier].queue.unshift(r);
+        if(r.batch) batchOom(r.batch);
         if(r.peak>6) log(`#${r.id} OOM on ${S.tiers[pod.tier].name} @${r.peak.toFixed(1)}GB → restart on ${S.tiers[r.tier].name} (${(wasted*100).toFixed(0)}% work lost)`,'w');
       } else {
         r.state='failed'; S.ctr.fail++;
+        if(r.batch) batchFail(r.batch);
         log(`#${r.id} FAILED — needs ${r.peak.toFixed(1)}GB, largest pod ${S.tiers[r.tier].usable.toFixed(1)}GB`,'b');
       }
     } else if(r.progress>=1){
       pod.report=null; S.ctr.done++; S.tiers[pod.tier].done++; S.compCount++;
       const wall=S.t-r.arrT; S.lat.n++; S.lat.sum+=wall;
+      if(r.batch) batchDone(r.batch,wall);
       if(r.dur>=14400) log(`#${r.id} done — 4h report finished on ${S.tiers[pod.tier].name}`,'g');
     }
   }
@@ -600,6 +618,8 @@ function renderThrottled(now){
     } else { pod.fill.style.height='0%'; pod.el.classList.remove('run'); }
   }
   for(const n of S.nodes){ if(n.memEl) n.memEl.style.width=((n.cap-n.free)/n.cap*100)+'%'; }
+
+  if(S.batches.length) renderBatches();
 
   // history + charts
   if(now-lastHist>150){
@@ -737,6 +757,10 @@ function initControls(){
   PRESETS.forEach(p=>{ const b=document.createElement('button'); b.className='preset';
     b.textContent=p.name; b.onclick=()=>applyPreset(p); pc.appendChild(b); });
   $('inject').onclick=injectBurst;
+  $('batches').onclick=e=>{
+    const x=e.target.getAttribute('data-batch-x');
+    if(x){ S.batches=S.batches.filter(b=>b.id!==+x); renderBatches(); }
+  };
 
   bindSlider('speed','speedV',v=>{S.speed=v;return v+'×';});
   const lamEl=$('lam');
@@ -755,7 +779,8 @@ function bindSlider(id,vid,fn){
 function reset(){
   S.t=0; S.ctr={arr:0,done:0,fail:0,req:0}; S.lat={n:0,sum:0};
   S.rate={arr:0,comp:0}; S.hist={arr:[],comp:[],q:[[],[],[]]};
-  $('log').innerHTML=''; buildCluster();
+  S.batches=[]; S.batchNo=0;
+  $('log').innerHTML=''; buildCluster(); renderBatches();
 }
 function setVal(id,v){ const e=$(id); e.value=v; e.dispatchEvent(new Event('input')); }
 function applyPreset(p){
@@ -770,14 +795,50 @@ function injectBurst(){
   let mn=+$('bMin').value, mx=+$('bMax').value; if(mx<mn){[mn,mx]=[mx,mn];}
   const dist=$('bDist').value, durMode=$('bDur').value, fixedS=(+$('bDurFixed').value)*60;
   const ti=Math.min(+$('bTier').value||0, S.tiers.length-1);
+  const batch={id:++S.batchNo,t0:S.t,count,mn,mx,dist,durMode,tier:ti,
+    done:0,failed:0,oom:0,first:null,last:null,sum:0,max:0};
+  S.batches.push(batch);
   for(let i=0;i<count;i++){
     const peak=burstMem(dist,mn,mx);
     const dur = durMode==='fixed'? fixedS : durForMem(peak)*(0.8+0.4*Math.random());
     S.tiers[ti].queue.push({id:++S.ctr.arr,peak,dur,progress:0,tier:ti,
-      state:'queued',arrT:S.t,_init:true});
+      state:'queued',arrT:S.t,_init:true,batch:batch.id});
   }
+  renderBatches();
   const durTxt = durMode==='fixed'? `${(+$('bDurFixed').value)}min fixed` : 'correlated';
   log(`⚡ injected ${count} reports · ${mn.toFixed(1)}–${mx.toFixed(1)}GB (${dist}) · ${durTxt} → ${S.tiers[ti].name}`,'w');
+}
+function findBatch(id){ return S.batches.find(b=>b.id===id); }
+function batchDone(id,wall){ const b=findBatch(id); if(!b) return;
+  b.done++; if(b.first===null) b.first=S.t-b.t0; b.last=S.t-b.t0; b.sum+=wall; if(wall>b.max) b.max=wall; }
+function batchFail(id){ const b=findBatch(id); if(b) b.failed++; }
+function batchOom(id){ const b=findBatch(id); if(b) b.oom++; }
+function bcell(label,val,color){ return `<div><span>${label}</span><b${color?` style="color:${color}"`:''}>${val}</b></div>`; }
+function renderBatches(){
+  const host=$('batches'); if(!host) return;
+  const empty=$('batchEmpty'); if(empty) empty.style.display=S.batches.length?'none':'';
+  host.innerHTML=S.batches.map(b=>{
+    const pending=b.count-b.done-b.failed, complete=(b.done+b.failed>=b.count);
+    const tName=S.tiers[b.tier]? S.tiers[b.tier].name : 'T'+(b.tier+1);
+    const first=b.first!=null? fmtTime(b.first):'–';
+    const last=complete&&b.last!=null? fmtTime(b.last) : (pending>0?'running…':'–');
+    const avg=b.done? fmtTime(b.sum/b.done):'–';
+    return `<div class="batch">
+      <button class="rm" data-batch-x="${b.id}" title="clear batch">×</button>
+      <div class="blabel">#${b.id} · ${b.count} rpts<br>
+        <span style="color:var(--ink2);font-weight:400">${b.mn.toFixed(1)}–${b.mx.toFixed(1)}GB ${b.dist} → ${tName}</span></div>
+      <div class="bstats">
+        ${bcell('done',b.done)}
+        ${bcell('pending',pending)}
+        ${bcell('failed',b.failed,b.failed?'var(--bad)':'')}
+        ${bcell('oom',b.oom,b.oom?'var(--warn)':'')}
+        ${bcell('1st report',first)}
+        ${bcell('last report',last)}
+        ${bcell('avg / report',avg)}
+        ${bcell('max',b.max?fmtTime(b.max):'–')}
+      </div>
+    </div>`;
+  }).join('');
 }
 
 // ---------------------------------------------------------------- go
