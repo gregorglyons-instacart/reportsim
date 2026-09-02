@@ -1,0 +1,16 @@
+name,class,vcore,ram_gb,usd_per_hour,usd_per_month
+Standard_D2als_v7,balanced low-mem,2,4,0.188,137.24
+Standard_D2as_v7,balanced,2,8,0.201,146.73
+Standard_E2as_v5,memory (old),2,16,0.228,166.44
+Standard_E2as_v7,memory,2,16,0.235,171.55
+Standard_F2as_v7,compute,2,4,0.256,186.88
+Standard_D4als_v7,balanced low-mem,4,8,0.376,274.48
+Standard_D4as_v7,balanced,4,16,0.401,292.73
+Standard_E4as_v5,memory (old),4,32,0.455,332.15
+Standard_E4as_v7,memory,4,32,0.47,343.1
+Standard_F4as_v7,compute,4,8,0.511,373.03
+Standard_D8als_v7,balanced low-mem,8,16,0.753,549.69
+Standard_D8as_v7,balanced,8,32,0.802,585.46
+Standard_E8as_v5,memory (old),8,64,0.91,664.3
+Standard_E8as_v7,memory,8,64,0.939,685.47
+Standard_F8as_v7,compute,8,16,1.022,746.06
