@@ -28,6 +28,7 @@
   .batch{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:var(--panel2);
     border:1px solid var(--line);border-radius:5px;padding:7px 9px}
   .batch .blabel{font-family:var(--mono);font-size:11px;color:var(--ink);min-width:150px;font-weight:600;line-height:1.3}
+  .batch .bcfg{font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.4;min-width:150px}
   .bstats{display:flex;gap:16px;flex-wrap:wrap}
   .bstats>div{display:flex;flex-direction:column;line-height:1.25}
   .bstats span{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
@@ -854,7 +855,7 @@ function injectBurst(){
   const dist=$('bDist').value, durMode=$('bDur').value, fixedS=(+$('bDurFixed').value)*60;
   const ti=Math.min(+$('bTier').value||0, S.tiers.length-1);
   const batch={id:++S.batchNo,t0:S.t,count,mn,mx,dist,durMode,tier:ti,
-    done:0,failed:0,oom:0,first:null,last:null,sum:0,max:0};
+    done:0,failed:0,oom:0,first:null,last:null,sum:0,max:0,cfg:clusterSnapshot()};
   S.batches.push(batch);
   for(let i=0;i<count;i++){
     const peak=burstMem(dist,mn,mx);
@@ -865,6 +866,16 @@ function injectBurst(){
   renderBatches();
   const durTxt = durMode==='fixed'? `${(+$('bDurFixed').value)}min fixed` : 'correlated';
   log(`⚡ injected ${count} reports · ${mn.toFixed(1)}–${mx.toFixed(1)}GB (${dist}) · ${durTxt} → ${S.tiers[ti].name}`,'w');
+}
+function clusterSnapshot(){
+  return { node:S.node.name, nodeRam:S.node.ram, nodes:S.nodes.length,
+    tiers:S.tierCfg.map(c=>({name:c.name,ram:c.ram,count:c.count})) };
+}
+function fmtCfg(cfg){
+  if(!cfg) return '';
+  const node=cfg.node.replace(/^Standard_/,'');
+  const pods=cfg.tiers.map(t=>`${t.name} ${t.count}×${t.ram}GB`).join(' · ');
+  return `<div>nodes: ${cfg.nodes}× ${node} (${cfg.nodeRam}GB)</div><div>pods: ${pods}</div>`;
 }
 function findBatch(id){ return S.batches.find(b=>b.id===id); }
 function batchDone(id,wall){ const b=findBatch(id); if(!b) return;
@@ -889,6 +900,7 @@ function renderBatches(){
       <button class="rm" data-batch-x="${b.id}" title="clear batch">×</button>
       <div class="blabel">#${b.id} · ${b.count} rpts<br>
         <span style="color:var(--ink2);font-weight:400">${b.mn.toFixed(1)}–${b.mx.toFixed(1)}GB ${b.dist} → ${tName}</span></div>
+      <div class="bcfg">${fmtCfg(b.cfg)}</div>
       <div class="bstats">${BATCH_FIELDS.map(([l,k])=>`<div><span>${l}</span><b data-f="${k}">–</b></div>`).join('')}</div>`;
     host.appendChild(el);
     const fields={}; el.querySelectorAll('[data-f]').forEach(n=>fields[n.dataset.f]=n);
