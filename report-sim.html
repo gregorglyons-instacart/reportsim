@@ -164,10 +164,10 @@
     <div class="tstat"><span>cluster RAM</span><b class="num" id="cRam">–</b></div>
     <div class="tstat"><span>est. cost</span><b class="num" id="cCost">–</b></div>
 
-    <h2 style="margin-top:14px">Memory curve
+    <h2 style="margin-top:14px">Memory / time curve
       <span style="text-transform:none;font-weight:400;color:var(--muted)">@ intensity <span id="curveInt">0.30</span></span></h2>
     <table class="curve" id="curve"></table>
-    <div class="hint">Peak GB per report percentile, and the smallest pod tier that fits it.</div>
+    <div class="hint">Peak GB and ~runtime per report percentile, and the smallest pod tier that fits.</div>
   </div>
 
   <div class="panel">
@@ -671,14 +671,14 @@ function renderCurve(){
   $('curveInt').textContent=S.intensity.toFixed(2);
   if(!S.tiers.length){ el.innerHTML=''; return; }
   const ps=[50,90,95,98,99,99.5,99.9,100];
-  let h='<tr><th>pct</th><th>peak GB</th><th style="text-align:center">lands on</th></tr>';
+  let h='<tr><th>pct</th><th>peak GB</th><th>~time</th><th style="text-align:center">lands on</th></tr>';
   for(const p of ps){
     const mem=interpMem(p,S.intensity);
     let fit=null;
     for(const t of S.tiers){ if(t.usable>=mem){fit=t;break;} }
     const cell=fit? `<td class="tier" style="color:${fit.color}">${fit.name}</td>`
                   : `<td class="tier" style="color:var(--bad)">✗ fail</td>`;
-    h+=`<tr><td>p${p}</td><td>${mem.toFixed(2)}</td>${cell}</tr>`;
+    h+=`<tr><td>p${p}</td><td>${mem.toFixed(2)}</td><td>${fmtTime(sampleDuration(p))}</td>${cell}</tr>`;
   }
   el.innerHTML=h;
 }
