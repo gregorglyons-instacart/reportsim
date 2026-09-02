@@ -54,8 +54,6 @@
   .tchead .tag{flex:1;font-weight:600;font-size:11px;display:flex;align-items:center;gap:5px}
   .mini{display:flex;align-items:center;gap:3px;font-size:10px;color:var(--muted)}
   .mini input{width:46px}
-  .tccheck{display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--ink2);margin-top:6px;cursor:pointer}
-  .tccheck input{accent-color:var(--warn);margin:0}
   .tcrow{display:flex;align-items:center;gap:5px;margin-top:6px;font-size:10px;color:var(--muted);flex-wrap:wrap}
   .tcrow input{width:42px}
   .tcrow .cur{margin-left:auto;color:var(--ink2);font-family:var(--mono)}
@@ -156,7 +154,7 @@
     <div class="hint">Reports start on tier 1 and, on OOM, are killed and restart from
       scratch on the next tier up (all progress lost). List tiers smallest→largest.
       Usable RAM per pod = size − 100 MB overhead. KEDA polls queue length every 15s;
-      scales up at once, down after 60s stable, and never evicts a busy pod.</div>
+      scales up at once, down after 60s stable, never evicting a busy pod. Set min = max to pin a tier.</div>
 
     <h2 style="margin-top:14px">Model</h2>
     <div class="ctl">
@@ -397,8 +395,8 @@ const S = {
   node:INSTANCES[13],               // E8as_v7 (64GB)
   overhead:0.1, intensity:0.3, lambda:0.0303, speed:120,
   tierCfg:[
-    {name:'T1',ram:2, count:12, auto:false, min:1, max:24, target:20},
-    {name:'T2',ram:32,count:1,  auto:false, min:1, max:4,  target:2},
+    {name:'T1',ram:2, count:12, min:12, max:12, target:20},
+    {name:'T2',ram:32,count:1,  min:1,  max:1,  target:2},
   ],
   nextScaleT:0,
   tiers:[], nodes:[], pods:[],
@@ -414,7 +412,7 @@ let podUID=0;
 
 function buildCluster(){
   // keep autoscaled tiers within their replica bounds
-  S.tierCfg.forEach(c=>{ if(c.auto) c.count=Math.min(c.max,Math.max(c.min,c.count)); });
+  S.tierCfg.forEach(c=>{ c.count=Math.min(c.max,Math.max(c.min,c.count)); });
   // collect running reports to re-queue (preserve progress)
   const inflight=[];
   for(const p of S.pods) if(p.report){ p.report.state='queued'; inflight.push(p.report); p.report=null; }
@@ -458,7 +456,6 @@ function maybeScale(){
   S.nextScaleT = S.t + KEDA_POLL;
   let changed=false;
   S.tierCfg.forEach((c,i)=>{
-    if(!c.auto){ c._belowSince=null; return; }
     const t=S.tiers[i]; if(!t) return;
     const busy=t.pods.filter(p=>p.report&&p.sched).length;
     // KEDA queue-length trigger: replicas = ceil(queue / target), bounded, never below busy
@@ -478,24 +475,18 @@ function renderTierConfig(){
   const canRemove=S.tierCfg.length>1;
   S.tierCfg.forEach((c,i)=>{
     const card=document.createElement('div'); card.className='tiercard';
-    const body = c.auto ? `
-      <div class="tcrow">
-        <span>min</span><input type="number" min="0" step="1" value="${c.min}" data-i="${i}" data-k="min">
-        <span>max</span><input type="number" min="1" step="1" value="${c.max}" data-i="${i}" data-k="max">
-        <span>target q/pod</span><input type="number" min="1" step="1" value="${c.target}" data-i="${i}" data-k="target">
-        <span class="cur">→ <b data-cur="${i}">${c.count}</b> pods</span>
-      </div>`
-    : `
-      <div class="tcrow"><span>pods</span>
-        <input type="number" min="0" step="1" value="${c.count}" data-i="${i}" data-k="count"></div>`;
     card.innerHTML=`
       <div class="tchead">
         <span class="tag"><span class="dot" style="background:${TIER_COLORS[i]}"></span>${c.name}</span>
         <label class="mini">RAM<input type="number" min="0.5" step="0.5" value="${c.ram}" data-i="${i}" data-k="ram"></label>
         <button class="rm" data-tier-rm="${i}" title="remove tier"${canRemove?'':' disabled'}>×</button>
       </div>
-      <label class="tccheck"><input type="checkbox" data-i="${i}" data-k="auto"${c.auto?' checked':''}> KEDA autoscale on queue length</label>
-      ${body}`;
+      <div class="tcrow">
+        <span>min</span><input type="number" min="0" step="1" value="${c.min}" data-i="${i}" data-k="min">
+        <span>max</span><input type="number" min="1" step="1" value="${c.max}" data-i="${i}" data-k="max">
+        <span>target q/pod</span><input type="number" min="1" step="1" value="${c.target}" data-i="${i}" data-k="target">
+        <span class="cur">→ <b data-cur="${i}">${c.count}</b> pods</span>
+      </div>`;
     tc.appendChild(card);
   });
   $('addTier').style.display = S.tierCfg.length>=MAX_TIERS? 'none':'';
@@ -616,7 +607,7 @@ function buildTierDOM(){
   S.tiers.forEach((t,i)=>{
     const el=document.createElement('div'); el.className='tp';
     const c=S.tierCfg[i];
-    const badge=c.auto?` <span style="color:var(--warn);font-weight:600">⇅${c.min}–${c.max}</span>`:'';
+    const badge=(c.min!==c.max)?` <span style="color:var(--warn);font-weight:600">⇅${c.min}–${c.max}</span>`:'';
     el.innerHTML=`<div class="th"><span class="tname"><span class="dot" style="background:${t.color}"></span>
       Tier ${t.name} · ${t.ram}GB${badge}</span><span class="num" style="font-size:11px;color:var(--ink2)"
       data-t="cap${i}"></span></div>
@@ -644,7 +635,7 @@ function renderThrottled(now){
     setT(`done${i}`,t.done); setT(`oom${i}`,t.oom); setT(`cap${i}`,`${run}/${sc} busy`);
     setW(`util${i}`, sc? run/sc*100:0);
     setW(`qbar${i}`, Math.min(100, t.queue.length/ Math.max(1,sc) *100/3));
-    if(S.tierCfg[i] && S.tierCfg[i].auto){ const cur=document.querySelector(`[data-cur="${i}"]`); if(cur) cur.textContent=S.tierCfg[i].count; }
+    const curEl=document.querySelector(`[data-cur="${i}"]`); if(curEl) curEl.textContent=S.tierCfg[i].count;
   });
   const util=cap? running/cap*100:0;
   $('kIn').textContent=fmt(queued+running);
@@ -784,15 +775,8 @@ function initControls(){
     const t=e.target, di=t.getAttribute('data-i'), k=t.getAttribute('data-k');
     if(di===null||!k) return;
     const c=S.tierCfg[+di];
-    if(k==='auto'){
-      c.auto=t.checked;
-      if(c.auto) c.count=Math.min(c.max,Math.max(c.min,c.count));
-      c._belowSince=null;
-      renderTierConfig(); buildCluster(); return;
-    }
     const v=+t.value;
     if(k==='ram')    c.ram=Math.max(0.5,v||0.5);
-    if(k==='count')  c.count=Math.max(0,Math.floor(v||0));
     if(k==='min')    c.min=Math.max(0,Math.floor(v||0));
     if(k==='max')    c.max=Math.max(1,Math.floor(v||1));
     if(k==='target') c.target=Math.max(1,Math.floor(v||1));
@@ -807,7 +791,7 @@ function initControls(){
   $('addTier').onclick=()=>{
     if(S.tierCfg.length>=MAX_TIERS) return;
     const maxRam=Math.max(...S.tierCfg.map(c=>c.ram));
-    S.tierCfg.push({name:'',ram:Math.round(maxRam*2),count:1,auto:false,min:1,max:8,target:20});
+    S.tierCfg.push({name:'',ram:Math.round(maxRam*2),count:1,min:1,max:1,target:20});
     normalizeTierNames(); renderTierConfig(); buildCluster();
   };
 
