@@ -169,6 +169,7 @@
       <button id="autoTune" class="preset">⚙ Auto-tune</button>
       <label class="mini">target ≤ <input type="number" id="tuneMax" min="1" step="1" value="15" style="width:46px"> min</label>
     </div>
+    <label class="mini" style="margin-top:5px;gap:5px"><input type="checkbox" id="tuneSingle" style="width:auto;margin:0"> single tier only</label>
     <div class="hint" id="tuneOut">Solves for node size + tier sizes/counts to clear the configured burst under the target time, at least cost (reports entering tier 1).</div>
 
     <h2 style="margin-top:14px">Model</h2>
@@ -1116,7 +1117,7 @@ function autoTune(){
   setTimeout(()=>{ try{ runAutoTune(); } catch(e){ $('tuneOut').textContent='auto-tune error: '+e.message; }
     finally{ btn.disabled=false; btn.textContent='⚙ Auto-tune tiers for burst'; } },30);
 }
-function autoCandidates(node,workloads,M,p90,p95,p97){
+function autoCandidates(node,workloads,M,p90,p95,p97,single){
   const A=Math.max(0.01,node.ram-kubeReservedGB(node.ram));
   const GRID=[0.5,1,1.5,2,2.5,3,4,6,8,12,16,24,32,48,64];
   const fits=s=>s<=A+1e-9, usableOf=s=>s-S.overhead;
@@ -1133,6 +1134,7 @@ function autoCandidates(node,workloads,M,p90,p95,p97){
     for(const c of [...new Set([1,2,3,4,6,8,12,16,per,per*2,per*3])].filter(x=>x>=1&&x<=per*4))
       out.push({sizes:[s],counts:[c],node,capped});
   }
+  if(single) return out;
   for(const sb of bulkSizes) for(const st of topSizes){
     if(sb>=st) continue;
     const D=tierDemand(workloads[0],[sb,st]), Dmax=Math.max(D[0],D[1],1e-9);
@@ -1157,8 +1159,9 @@ function runAutoTune(){
   const byRam=new Map();
   for(const it of INSTANCES){ const c=byRam.get(it.ram); if(!c||it.hr<c.hr) byRam.set(it.ram,it); }
   const nodeCands=[...byRam.values()].sort((a,b)=>a.ram-b.ram);
+  const single=$('tuneSingle') && $('tuneSingle').checked;
   const candidates=[];
-  for(const nd of nodeCands) candidates.push(...autoCandidates(nd,workloads,M,p90,p95,p97));
+  for(const nd of nodeCands) candidates.push(...autoCandidates(nd,workloads,M,p90,p95,p97,single));
   const scoreOf=cfg=>{
     let cost=0,fail=0,unsched=0,leftover=0,mk=0,nodes=0,oom=0,feasibleAll=true,capped=false;
     for(const w of workloads){ const r=evalConfig(cfg.sizes,cfg.counts,w,cfg.node);
