@@ -870,24 +870,20 @@ function applyPreset(p){
   if(p.durMin) setVal('bDurFixed',p.durMin);
   $('bTier').value=Math.min(p.tier,S.tiers.length-1);
 }
-// TEMP: memory-bucket breakdown per batch (GB ranges)
-const MEM_BUCKETS=[
-  {hi:0.5,label:'≤0.5'},{hi:1,label:'0.5–1'},{hi:2,label:'1–2'},{hi:4,label:'2–4'},
-  {hi:8,label:'4–8'},{hi:16,label:'8–16'},{hi:32,label:'16–32'},{hi:Infinity,label:'>32'},
-];
-function memBucket(peak){ for(let i=0;i<MEM_BUCKETS.length;i++) if(peak<MEM_BUCKETS[i].hi) return i; return MEM_BUCKETS.length-1; }
+// TEMP: per-batch memory histogram — equal-width 1GB bins
 function injectBurst(){
   const count=Math.round(+$('bCount').value);
   let mn=+$('bMin').value, mx=+$('bMax').value; if(mx<mn){[mn,mx]=[mx,mn];}
   const dist=$('bDist').value, durMode=$('bDur').value, fixedS=(+$('bDurFixed').value)*60;
   const ti=Math.min(+$('bTier').value||0, S.tiers.length-1);
-  const buckets=new Array(MEM_BUCKETS.length).fill(0);
+  const nBins=Math.max(1,Math.floor(mx)+1);
+  const buckets=new Array(nBins).fill(0);
   const batch={id:++S.batchNo,t0:S.t,count,mn,mx,dist,durMode,tier:ti,
     done:0,failed:0,oom:0,first:null,last:null,sum:0,max:0,lastTier:null,buckets,cfg:clusterSnapshot()};
   S.batches.push(batch);
   for(let i=0;i<count;i++){
     const peak=burstMem(dist,mn,mx);
-    buckets[memBucket(peak)]++;
+    buckets[Math.min(nBins-1,Math.max(0,Math.floor(peak)))]++;
     const dur = durMode==='fixed'? fixedS : durForMem(peak)*(0.8+0.4*Math.random());
     S.tiers[ti].queue.push({id:++S.ctr.arr,peak,dur,progress:0,tier:ti,
       state:'queued',arrT:S.t,_init:true,batch:batch.id});
@@ -906,15 +902,19 @@ function fmtCfg(cfg){
   const pods=cfg.tiers.map(t=>`${t.name} ${t.count}×${t.ram}GB`).join(' · ');
   return `<div>nodes: ${cfg.nodes}× ${node} (${cfg.nodeRam}GB)</div><div>pods: ${pods}</div>`;
 }
-// TEMP: memory-bucket histogram for a batch (captured at inject time)
+// TEMP: memory histogram for a batch (equal-width 1GB bins, captured at inject)
 function fmtBuckets(b){
-  if(!b.buckets) return '';
+  if(!b.buckets||!b.buckets.length) return '';
   const maxc=Math.max(1,...b.buckets), total=b.count||1;
-  const bars=b.buckets.map((c,i)=>({c,label:MEM_BUCKETS[i].label})).filter(x=>x.c>0).map(x=>
-    `<div class="bbk"><span class="bbl">${x.label}</span>`
-    +`<span class="bbar"><i style="width:${(x.c/maxc*100).toFixed(1)}%"></i></span>`
-    +`<span class="bbc">${x.c}</span><span class="bbp">${(x.c/total*100).toFixed(0)}%</span></div>`).join('');
-  return `<div class="bbuckets"><span class="bbt">mem buckets (GB)</span>${bars}</div>`;
+  const lo=b.buckets.findIndex(c=>c>0); if(lo<0) return '';
+  let hi=b.buckets.length-1; while(hi>lo && b.buckets[hi]===0) hi--;
+  let bars='';
+  for(let i=lo;i<=hi;i++){ const c=b.buckets[i];
+    bars+=`<div class="bbk"><span class="bbl">${i}–${i+1}</span>`
+      +`<span class="bbar"><i style="width:${(c/maxc*100).toFixed(1)}%"></i></span>`
+      +`<span class="bbc">${c}</span><span class="bbp">${(c/total*100).toFixed(0)}%</span></div>`;
+  }
+  return `<div class="bbuckets"><span class="bbt">mem buckets (1GB)</span>${bars}</div>`;
 }
 function findBatch(id){ return S.batches.find(b=>b.id===id); }
 function batchDone(id,wall,tier){ const b=findBatch(id); if(!b) return;
