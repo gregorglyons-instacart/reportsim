@@ -1123,7 +1123,8 @@ function autoCandidates(node,workloads,M,p90,p95,p97,maxTiers,T){
   const fits=s=>s<=A+1e-9, usableOf=s=>s-S.overhead;
   const cleanDiv=[]; for(const k of [1,2,3,4,6]){ const s=Math.floor(A/k*2)/2; if(s>=0.5) cleanDiv.push(s); }
   let capped=false;
-  let topSizes=[...new Set([...GRID,...cleanDiv])].filter(s=>fits(s)&&usableOf(s)>=M-1e-9).sort((a,b)=>a-b).slice(0,5);
+  const fitSize=Math.ceil((M+S.overhead)*2)/2; // smallest 0.5-GB pod that fits the largest report — efficient top-tier size on any node
+  let topSizes=[...new Set([...GRID,...cleanDiv,fitSize,fitSize+0.5])].filter(s=>fits(s)&&usableOf(s)>=M-1e-9).sort((a,b)=>a-b).slice(0,5);
   if(!topSizes.length){ capped=true; topSizes=[Math.floor(A*2)/2]; } // node can't fit the largest report
   const topMax=topSizes[topSizes.length-1];
   const bulkSizes=[...new Set(GRID)].filter(s=>fits(s)&&s<topMax&&usableOf(s)>=Math.min(p90,p95)-0.5&&s<=p97+2)
