@@ -215,6 +215,7 @@
         <option value="small">skew small (most near min)</option>
         <option value="large">skew large (most near max)</option>
         <option value="const">constant (all = max)</option>
+        <option value="curve">production curve (within range)</option>
       </select>
     </div>
     <div class="ctl">
@@ -395,6 +396,11 @@ function memToPct(mem,intensity){
 }
 function durForMem(mem){ return sampleDuration(memToPct(mem,S.intensity)); }
 function burstMem(dist,mn,mx){
+  if(dist==='curve'){ // production memory curve, truncated to [mn,mx] via its percentile window
+    const pLo=memToPct(mn,S.intensity), pHi=memToPct(mx,S.intensity);
+    const P=pLo+Math.random()*(pHi-pLo);
+    return Math.min(mx,Math.max(mn,interpMem(P,S.intensity)));
+  }
   const r=Math.random();
   const f = dist==='small'? r*r : dist==='large'? Math.sqrt(r) : dist==='const'? 1 : r;
   return mn+f*(mx-mn);
