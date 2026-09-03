@@ -29,6 +29,16 @@
     border:1px solid var(--line);border-radius:5px;padding:7px 9px}
   .batch .blabel{font-family:var(--mono);font-size:11px;color:var(--ink);min-width:150px;font-weight:600;line-height:1.3}
   .batch .bcfg{font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.4;min-width:150px}
+  .batch .bbuckets{flex-basis:100%;display:flex;flex-wrap:wrap;align-items:center;gap:3px 12px;
+    margin-top:5px;padding-top:6px;border-top:1px dashed var(--line);
+    font-family:var(--mono);font-size:10px;color:var(--ink2)}
+  .bbuckets .bbt{color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+  .bbk{display:flex;align-items:center;gap:5px}
+  .bbl{color:var(--ink2);min-width:40px;text-align:right}
+  .bbar{display:inline-block;width:70px;height:8px;background:#0c0e0f;border-radius:2px;overflow:hidden}
+  .bbar>i{display:block;height:100%;background:var(--s)}
+  .bbc{color:var(--ink);min-width:20px;text-align:right;font-variant-numeric:tabular-nums}
+  .bbp{color:var(--muted);min-width:30px;text-align:right;font-variant-numeric:tabular-nums}
   .bstats{display:flex;gap:16px;flex-wrap:wrap}
   .bstats>div{display:flex;flex-direction:column;line-height:1.25}
   .bstats span{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
@@ -860,16 +870,24 @@ function applyPreset(p){
   if(p.durMin) setVal('bDurFixed',p.durMin);
   $('bTier').value=Math.min(p.tier,S.tiers.length-1);
 }
+// TEMP: memory-bucket breakdown per batch (GB ranges)
+const MEM_BUCKETS=[
+  {hi:0.5,label:'≤0.5'},{hi:1,label:'0.5–1'},{hi:2,label:'1–2'},{hi:4,label:'2–4'},
+  {hi:8,label:'4–8'},{hi:16,label:'8–16'},{hi:32,label:'16–32'},{hi:Infinity,label:'>32'},
+];
+function memBucket(peak){ for(let i=0;i<MEM_BUCKETS.length;i++) if(peak<MEM_BUCKETS[i].hi) return i; return MEM_BUCKETS.length-1; }
 function injectBurst(){
   const count=Math.round(+$('bCount').value);
   let mn=+$('bMin').value, mx=+$('bMax').value; if(mx<mn){[mn,mx]=[mx,mn];}
   const dist=$('bDist').value, durMode=$('bDur').value, fixedS=(+$('bDurFixed').value)*60;
   const ti=Math.min(+$('bTier').value||0, S.tiers.length-1);
+  const buckets=new Array(MEM_BUCKETS.length).fill(0);
   const batch={id:++S.batchNo,t0:S.t,count,mn,mx,dist,durMode,tier:ti,
-    done:0,failed:0,oom:0,first:null,last:null,sum:0,max:0,lastTier:null,cfg:clusterSnapshot()};
+    done:0,failed:0,oom:0,first:null,last:null,sum:0,max:0,lastTier:null,buckets,cfg:clusterSnapshot()};
   S.batches.push(batch);
   for(let i=0;i<count;i++){
     const peak=burstMem(dist,mn,mx);
+    buckets[memBucket(peak)]++;
     const dur = durMode==='fixed'? fixedS : durForMem(peak)*(0.8+0.4*Math.random());
     S.tiers[ti].queue.push({id:++S.ctr.arr,peak,dur,progress:0,tier:ti,
       state:'queued',arrT:S.t,_init:true,batch:batch.id});
@@ -887,6 +905,16 @@ function fmtCfg(cfg){
   const node=cfg.node.replace(/^Standard_/,'');
   const pods=cfg.tiers.map(t=>`${t.name} ${t.count}×${t.ram}GB`).join(' · ');
   return `<div>nodes: ${cfg.nodes}× ${node} (${cfg.nodeRam}GB)</div><div>pods: ${pods}</div>`;
+}
+// TEMP: memory-bucket histogram for a batch (captured at inject time)
+function fmtBuckets(b){
+  if(!b.buckets) return '';
+  const maxc=Math.max(1,...b.buckets), total=b.count||1;
+  const bars=b.buckets.map((c,i)=>({c,label:MEM_BUCKETS[i].label})).filter(x=>x.c>0).map(x=>
+    `<div class="bbk"><span class="bbl">${x.label}</span>`
+    +`<span class="bbar"><i style="width:${(x.c/maxc*100).toFixed(1)}%"></i></span>`
+    +`<span class="bbc">${x.c}</span><span class="bbp">${(x.c/total*100).toFixed(0)}%</span></div>`).join('');
+  return `<div class="bbuckets"><span class="bbt">mem buckets (GB)</span>${bars}</div>`;
 }
 function findBatch(id){ return S.batches.find(b=>b.id===id); }
 function batchDone(id,wall,tier){ const b=findBatch(id); if(!b) return;
@@ -914,7 +942,8 @@ function renderBatches(){
         <span style="color:var(--ink2);font-weight:400">${b.mn.toFixed(1)}–${b.mx.toFixed(1)}GB ${b.dist} → ${tName}</span></div>
       <div class="bstats">${BATCH_FIELDS.map(([l,k])=>`<div><span>${l}</span><b data-f="${k}">–</b></div>`).join('')}</div>
       <div class="bstats"><div><span>final tier</span><b data-f="finaltier">–</b></div></div>
-      <div class="bcfg">${fmtCfg(b.cfg)}</div>`;
+      <div class="bcfg">${fmtCfg(b.cfg)}</div>
+      ${fmtBuckets(b)}`;
     host.appendChild(el);
     const fields={}; el.querySelectorAll('[data-f]').forEach(n=>fields[n.dataset.f]=n);
     batchDom.set(b.id,{el,fields});
