@@ -266,7 +266,11 @@
     </div>
 
     <div class="panel" style="margin-top:10px">
-      <h2>Batch results</h2>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <h2 style="margin:0">Batch results</h2>
+        <div class="sp"></div>
+        <button id="exportCsv" class="preset" disabled>⬇ Export CSV</button>
+      </div>
       <div id="batches"></div>
       <div class="hint" id="batchEmpty">Inject a burst to track its completion stats here.</div>
     </div>
@@ -829,6 +833,7 @@ function initControls(){
   $('run').onclick=()=>{ S.running=!S.running; const b=$('run');
     b.textContent=S.running?'⏸ Pause':'▶ Start'; b.className=S.running?'stop':'go'; S.lastReal=0; };
   $('reset').onclick=reset;
+  $('exportCsv').onclick=exportBatchesCSV;
 }
 function bindSlider(id,vid,fn){
   const el=$(id); const upd=()=>{ $(vid).textContent=fn(parseFloat(el.value)); };
@@ -889,6 +894,7 @@ const batchDom=new Map(); // batch id -> {el, fields}
 function renderBatches(){
   const host=$('batches'); if(!host) return;
   const empty=$('batchEmpty'); if(empty) empty.style.display=S.batches.length?'none':'';
+  const ex=$('exportCsv'); if(ex) ex.disabled=!S.batches.length;
   // drop DOM for batches that were cleared
   for(const [id,rec] of [...batchDom]){ if(!S.batches.some(b=>b.id===id)){ rec.el.remove(); batchDom.delete(id); } }
   // create DOM once for new batches (appended in order)
@@ -929,6 +935,55 @@ function renderBatches(){
       f.finaltier.style.color=TIER_COLORS[b.lastTier]||'';
     } else { f.finaltier.textContent='–'; f.finaltier.style.color=''; }
   });
+}
+function csvCell(v){
+  if(v==null) return '';
+  const s=String(v);
+  return /[",\n\r]/.test(s)? '"'+s.replace(/"/g,'""')+'"' : s;
+}
+function fileStamp(){
+  const d=new Date(), p=n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+function exportBatchesCSV(){
+  if(!S.batches.length){ log('no batches to export','w'); return; }
+  const cols=['batch_id','injected_at_sim_s','count','entry_tier','entry_tier_index',
+    'mem_min_gb','mem_max_gb','mem_dist','dur_mode',
+    'complete','done','pending','failed','oom',
+    'elapsed_s','first_report_s','last_report_s','avg_report_s','max_report_s',
+    'final_tier','final_tier_index',
+    'cluster_hourly_usd','cluster_cost_usd','prewarm_cost_usd',
+    'node_type','node_ram_gb','node_count','node_usd_per_hr','tiers'];
+  const num=(v,dp)=> v==null?'':(+v).toFixed(dp);
+  const rows=[cols.join(',')];
+  for(const b of S.batches){
+    const pending=b.count-b.done-b.failed;
+    const complete=(b.done+b.failed>=b.count);
+    const elapsed=(complete&&b.last!=null)? b.last : (S.t-b.t0);
+    const clusterHr=b.cfg? b.cfg.nodes*b.cfg.hr : S.nodes.length*S.node.hr;
+    const entryName=S.tiers[b.tier]? S.tiers[b.tier].name : 'T'+(b.tier+1);
+    const ft=(complete&&b.lastTier!=null)? b.lastTier : null;
+    const ftName= ft==null? '' : (b.cfg&&b.cfg.tiers[ft]? b.cfg.tiers[ft].name
+                 : (S.tiers[ft]? S.tiers[ft].name : 'T'+(ft+1)));
+    const tiers=b.cfg? b.cfg.tiers.map(t=>`${t.name} ${t.count}×${t.ram}GB`).join(' · ') : '';
+    rows.push([
+      b.id, num(b.t0,1), b.count, entryName, b.tier,
+      num(b.mn,2), num(b.mx,2), b.dist, b.durMode,
+      complete, b.done, pending, b.failed, b.oom,
+      num(elapsed,2), num(b.first,2), num(complete?b.last:null,2),
+      b.done? num(b.sum/b.done,2):'', num(b.max||null,2),
+      ftName, ft==null?'':ft,
+      num(clusterHr,3), num(elapsed/3600*clusterHr,4), num(0.5*clusterHr,4),
+      b.cfg?b.cfg.node:'', b.cfg?b.cfg.nodeRam:'', b.cfg?b.cfg.nodes:'', num(b.cfg?b.cfg.hr:null,3), tiers
+    ].map(csvCell).join(','));
+  }
+  const blob=new Blob(['﻿'+rows.join('\r\n')],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download=`batches-${fileStamp()}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+  log(`exported ${S.batches.length} batch(es) to CSV`,'g');
 }
 
 // ---------------------------------------------------------------- go
