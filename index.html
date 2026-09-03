@@ -340,10 +340,10 @@ const KEDA_POLL = 15;      // sim seconds between autoscale evaluations
 const KEDA_COOLDOWN = 60;  // sim seconds a scale-down must stay warranted before applying
 const SHOW_KEDA = false;   // show per-tier min/max/target autoscale controls (else a plain pods input)
 const PRESETS = [
-  {name:'1× BigY', count:1600,  min:0.1, max:1.5, dist:'uniform', dur:'corr', tier:0},
-  {name:'2× BigY', count:3200,  min:0.1, max:1.5, dist:'uniform', dur:'corr', tier:0},
-  {name:'4× BigY', count:6400,  min:0.1, max:1.5, dist:'uniform', dur:'corr', tier:0},
-  {name:'8× BigY', count:12800, min:0.1, max:1.5, dist:'uniform', dur:'corr', tier:0},
+  {name:'1× BigY', count:1600,  min:0.1, max:1.5, dist:'curve', dur:'corr', tier:0},
+  {name:'2× BigY', count:3200,  min:0.1, max:1.5, dist:'curve', dur:'corr', tier:0},
+  {name:'4× BigY', count:6400,  min:0.1, max:1.5, dist:'curve', dur:'corr', tier:0},
+  {name:'8× BigY', count:12800, min:0.1, max:1.5, dist:'curve', dur:'corr', tier:0},
 ];
 
 // ---------------------------------------------------------------- sampling
