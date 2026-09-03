@@ -321,17 +321,14 @@ const MEM = [
 const INSTANCES = [
   {name:'Standard_D2als_v7',cls:'balanced low-mem',vcore:2,ram:4, hr:0.188,mo:137.24},
   {name:'Standard_D2as_v7', cls:'balanced',        vcore:2,ram:8, hr:0.201,mo:146.73},
-  {name:'Standard_E2as_v5', cls:'memory (old)',    vcore:2,ram:16,hr:0.228,mo:166.44},
   {name:'Standard_E2as_v7', cls:'memory',          vcore:2,ram:16,hr:0.235,mo:171.55},
   {name:'Standard_F2as_v7', cls:'compute',         vcore:2,ram:4, hr:0.256,mo:186.88},
   {name:'Standard_D4als_v7',cls:'balanced low-mem',vcore:4,ram:8, hr:0.376,mo:274.48},
   {name:'Standard_D4as_v7', cls:'balanced',        vcore:4,ram:16,hr:0.401,mo:292.73},
-  {name:'Standard_E4as_v5', cls:'memory (old)',    vcore:4,ram:32,hr:0.455,mo:332.15},
   {name:'Standard_E4as_v7', cls:'memory',          vcore:4,ram:32,hr:0.47, mo:343.1},
   {name:'Standard_F4as_v7', cls:'compute',         vcore:4,ram:8, hr:0.511,mo:373.03},
   {name:'Standard_D8als_v7',cls:'balanced low-mem',vcore:8,ram:16,hr:0.753,mo:549.69},
   {name:'Standard_D8as_v7', cls:'balanced',        vcore:8,ram:32,hr:0.802,mo:585.46},
-  {name:'Standard_E8as_v5', cls:'memory (old)',    vcore:8,ram:64,hr:0.91, mo:664.3},
   {name:'Standard_E8as_v7', cls:'memory',          vcore:8,ram:64,hr:0.939,mo:685.47},
   {name:'Standard_F8as_v7', cls:'compute',         vcore:8,ram:16,hr:1.022,mo:746.06},
 ];
@@ -419,7 +416,7 @@ function kubeReservedGB(ramGB){
 // ---------------------------------------------------------------- state
 const S = {
   running:false, t:0, lastReal:0,
-  node:INSTANCES[13],               // E8as_v7 (64GB)
+  node:INSTANCES.find(x=>x.name==='Standard_E8as_v7'), // 64GB
   overhead:0.1, intensity:0.3, lambda:0, speed:1,
   tierCfg:[
     {name:'T1',ram:2, count:12, min:12, max:12, target:20},
