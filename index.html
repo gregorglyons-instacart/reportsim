@@ -1113,7 +1113,7 @@ function autoTune(){
   setTimeout(()=>{ try{ runAutoTune(); } catch(e){ $('tuneOut').textContent='auto-tune error: '+e.message; }
     finally{ btn.disabled=false; btn.textContent='⚙ Auto-tune tiers for burst'; } },30);
 }
-function autoCandidates(node,workloads,M,p90,p95,p97,single){
+function autoCandidates(node,workloads,M,p90,p95,p97,single,T){
   const A=Math.max(0.01,node.ram-kubeReservedGB(node.ram));
   const GRID=[0.5,1,1.5,2,2.5,3,4,6,8,12,16,24,32,48,64];
   const fits=s=>s<=A+1e-9, usableOf=s=>s-S.overhead;
@@ -1124,10 +1124,15 @@ function autoCandidates(node,workloads,M,p90,p95,p97,single){
   const topMax=topSizes[topSizes.length-1];
   const bulkSizes=[...new Set(GRID)].filter(s=>fits(s)&&s<topMax&&usableOf(s)>=Math.min(p90,p95)-0.5&&s<=p97+2)
     .sort((a,b)=>a-b).slice(0,4);
+  // pods needed to clear D pod-seconds of work by the deadline (no node cap; a
+  // generous safety ceiling only guards against a degenerate near-zero target)
+  const CAP=8192, need=D=>Math.min(CAP,Math.max(1,Math.ceil(D/T)));
   const out=[];
   for(const s of topSizes){
-    const per=Math.max(1,Math.floor(A/s));
-    for(const c of [...new Set([1,2,3,4,6,8,12,16,per,per*2,per*3])].filter(x=>x>=1&&x<=per*4))
+    const per=Math.max(1,Math.floor(A/s)), u=usableOf(s);
+    let D=0; for(const r of workloads[0]) D+=(u>=r.m? r.d : r.d*(u/r.m));
+    const n=need(D);
+    for(const c of [...new Set([1,2,3,4,6,8,12,16,per,per*2,per*3,n,Math.ceil(n*1.15),Math.ceil(n*1.4)])].filter(x=>x>=1))
       out.push({sizes:[s],counts:[c],node,capped});
   }
   if(single) return out;
@@ -1138,6 +1143,9 @@ function autoCandidates(node,workloads,M,p90,p95,p97,single){
       const n0=Math.max(1,Math.round(sc*D[0]/Dmax)), n1=Math.max(1,Math.round(sc*D[1]/Dmax));
       out.push({sizes:[sb,st],counts:[n0,n1],node,capped});
     }
+    const nd0=need(D[0]), nd1=need(D[1]);
+    out.push({sizes:[sb,st],counts:[nd0,nd1],node,capped});
+    out.push({sizes:[sb,st],counts:[Math.ceil(nd0*1.25),Math.ceil(nd1*1.25)],node,capped});
   }
   return out;
 }
@@ -1157,7 +1165,7 @@ function runAutoTune(){
   const nodeCands=[...byRam.values()].sort((a,b)=>a.ram-b.ram);
   const single=$('tuneSingle') && $('tuneSingle').checked;
   const candidates=[];
-  for(const nd of nodeCands) candidates.push(...autoCandidates(nd,workloads,M,p90,p95,p97,single));
+  for(const nd of nodeCands) candidates.push(...autoCandidates(nd,workloads,M,p90,p95,p97,single,T));
   const scoreOf=cfg=>{
     let cost=0,fail=0,unsched=0,leftover=0,mk=0,nodes=0,oom=0,feasibleAll=true,capped=false;
     for(const w of workloads){ const r=evalConfig(cfg.sizes,cfg.counts,w,cfg.node);
