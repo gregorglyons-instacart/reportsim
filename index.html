@@ -155,6 +155,8 @@
     <div class="hint">Reports start on tier 1 and, on OOM, are killed and restart from
       scratch on the next tier up (all progress lost). List tiers smallest→largest.
       Usable RAM per pod = size − 100 MB overhead.</div>
+    <button id="autoTune" class="preset" style="margin-top:8px">⚙ Auto-tune tiers for burst</button>
+    <div class="hint" id="tuneOut">Finds the cheapest tier sizes + counts to clear the configured burst on this node (reports entering tier 1).</div>
 
     <h2 style="margin-top:14px">Model</h2>
     <div class="ctl">
@@ -834,6 +836,7 @@ function initControls(){
     b.textContent=S.running?'⏸ Pause':'▶ Start'; b.className=S.running?'stop':'go'; S.lastReal=0; };
   $('reset').onclick=reset;
   $('exportCsv').onclick=exportBatchesCSV;
+  $('autoTune').onclick=autoTune;
 }
 function bindSlider(id,vid,fn){
   const el=$(id); const upd=()=>{ $(vid).textContent=fn(parseFloat(el.value)); };
@@ -984,6 +987,155 @@ function exportBatchesCSV(){
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
   log(`exported ${S.batches.length} batch(es) to CSV`,'g');
+}
+
+// ---------------------------------------------------------------- auto-tune
+// A fast, event-driven replay of the sim model, used as the scorer for the
+// tier-config search. Each report occupies a pod for its full duration if it
+// fits, or dur×(usable/peak) before an OOM-kill and restart on the next tier
+// (matching stepSim). No time-stepping, so cost is independent of durations.
+class MinHeap{
+  constructor(){ this.a=[]; }
+  get size(){ return this.a.length; }
+  push(t,v){ const a=this.a; a.push([t,v]); let i=a.length-1;
+    while(i>0){ const p=(i-1)>>1; if(a[p][0]<=a[i][0]) break; const s=a[p];a[p]=a[i];a[i]=s; i=p; } }
+  pop(){ const a=this.a, top=a[0], last=a.pop();
+    if(a.length){ a[0]=last; let i=0; const n=a.length;
+      for(;;){ let l=2*i+1,r=l+1,m=i;
+        if(l<n&&a[l][0]<a[m][0])m=l; if(r<n&&a[r][0]<a[m][0])m=r;
+        if(m===i)break; const s=a[m];a[m]=a[i];a[i]=s; i=m; } }
+    return top; }
+}
+function sampleAutoWorkload(){
+  const count=Math.round(+$('bCount').value);
+  let mn=+$('bMin').value, mx=+$('bMax').value; if(mx<mn){[mn,mx]=[mx,mn];}
+  const dist=$('bDist').value, durMode=$('bDur').value, fixedS=(+$('bDurFixed').value)*60;
+  const w=[];
+  for(let i=0;i<count;i++){
+    const m=burstMem(dist,mn,mx);
+    const d=durMode==='fixed'? fixedS : durForMem(m)*(0.8+0.4*Math.random());
+    w.push({m,d});
+  }
+  return w;
+}
+function tierDemand(workload,sizes){ // expected pod-seconds of load per tier
+  const usable=sizes.map(s=>Math.max(0.01,s-S.overhead)), K=sizes.length, D=new Array(K).fill(0);
+  for(const r of workload){
+    for(let j=0;j<K;j++){
+      D[j]+= usable[j]>=r.m ? r.d : r.d*(usable[j]/r.m);
+      if(usable[j]>=r.m || j===K-1) break;
+    }
+  }
+  return D;
+}
+function evalConfig(sizes,counts,workload){
+  const A=Math.max(0.01,S.node.ram-kubeReservedGB(S.node.ram)), K=sizes.length;
+  // FFD bin-pack, mirroring buildCluster
+  const podSizes=[];
+  for(let j=0;j<K;j++) for(let i=0;i<counts[j];i++) podSizes.push(sizes[j]);
+  podSizes.sort((a,b)=>b-a);
+  const free=[]; let unsched=0;
+  for(const ps of podSizes){
+    if(ps>A+1e-9){ unsched++; continue; }
+    let placed=false;
+    for(let n=0;n<free.length;n++){ if(free[n]>=ps-1e-9){ free[n]-=ps; placed=true; break; } }
+    if(!placed) free.push(A-ps);
+  }
+  const nodeCount=free.length;
+  const usable=sizes.map(s=>Math.max(0.01,s-S.overhead));
+  const queue=[], idle=[], pods=[];
+  for(let j=0;j<K;j++){ queue.push([]); idle.push([]); }
+  for(let j=0;j<K;j++) for(let i=0;i<counts[j];i++){ pods.push({tier:j,usable:usable[j],job:null,outcome:null}); idle[j].push(pods.length-1); }
+  for(const r of workload) queue[0].push(r);
+  const heap=new MinHeap(); let cur=0;
+  const dispatch=j=>{ const iq=idle[j], q=queue[j];
+    while(iq.length && q.length){ const pi=iq.pop(), r=q.shift(), p=pods[pi]; p.job=r;
+      if(p.usable>=r.m){ p.outcome='done'; heap.push(cur+r.d,pi); }
+      else { p.outcome='oom'; heap.push(cur+r.d*(p.usable/r.m),pi); } } };
+  for(let j=0;j<K;j++) dispatch(j);
+  let done=0, fail=0, oom=0, lastT=0;
+  while(heap.size){
+    const [t,pi]=heap.pop(); cur=t; if(t>lastT) lastT=t;
+    const p=pods[pi], r=p.job; p.job=null;
+    if(p.outcome==='done') done++;
+    else if(p.tier+1<K){ oom++; queue[p.tier+1].unshift(r); }
+    else fail++;
+    idle[p.tier].push(pi);
+    dispatch(p.tier);
+    if(p.outcome==='oom' && p.tier+1<K) dispatch(p.tier+1);
+  }
+  let leftover=0; for(const q of queue) leftover+=q.length; // stuck (tier with no pods)
+  const clusterHr=nodeCount*S.node.hr;
+  const cost=(lastT/3600)*clusterHr + 0.5*clusterHr; // makespan + pre-warm, matching batch costing
+  return {feasible:unsched===0&&leftover===0&&fail===0, unsched,leftover,fail,oom,done,makespan:lastT,nodeCount,cost};
+}
+function autoTune(){
+  const btn=$('autoTune');
+  btn.disabled=true; btn.textContent='Tuning…';
+  setTimeout(()=>{ try{ runAutoTune(); } catch(e){ $('tuneOut').textContent='auto-tune error: '+e.message; }
+    finally{ btn.disabled=false; btn.textContent='⚙ Auto-tune tiers for burst'; } },30);
+}
+function runAutoTune(){
+  const out=$('tuneOut');
+  const A=Math.max(0.01,S.node.ram-kubeReservedGB(S.node.ram)), NW=3;
+  const workloads=[]; for(let i=0;i<NW;i++) workloads.push(sampleAutoWorkload());
+  if(!workloads[0].length){ out.textContent='Set the burst Reports above 0 first.'; return; }
+  const allM=[]; for(const w of workloads) for(const r of w) allM.push(r.m);
+  allM.sort((a,b)=>a-b);
+  const M=allM[allM.length-1];
+  const pctl=q=>allM[Math.min(allM.length-1,Math.max(0,Math.floor(q/100*allM.length)))];
+  const p90=pctl(90), p95=pctl(95), p97=pctl(97);
+  const GRID=[0.5,1,1.5,2,2.5,3,4,6,8,12,16,24,32,48,64];
+  const fits=s=>s<=A+1e-9, usableOf=s=>s-S.overhead;
+  const cleanDiv=[]; for(const k of [1,2,3,4,6]){ const s=Math.floor(A/k*2)/2; if(s>=0.5) cleanDiv.push(s); }
+  let capped=false;
+  let topSizes=[...new Set([...GRID,...cleanDiv])].filter(s=>fits(s)&&usableOf(s)>=M-1e-9).sort((a,b)=>a-b).slice(0,5);
+  if(!topSizes.length){ capped=true; topSizes=[Math.floor(A*2)/2]; } // node can't fit the largest report
+  const topMax=topSizes[topSizes.length-1];
+  const bulkSizes=[...new Set(GRID)].filter(s=>fits(s)&&s<topMax&&usableOf(s)>=Math.min(p90,p95)-0.5&&s<=p97+2)
+    .sort((a,b)=>a-b).slice(0,4);
+  const candidates=[];
+  for(const s of topSizes){
+    const per=Math.max(1,Math.floor(A/s));
+    for(const c of [...new Set([1,2,3,4,6,8,12,16,per,per*2,per*3])].filter(x=>x>=1&&x<=per*4))
+      candidates.push({sizes:[s],counts:[c]});
+  }
+  for(const sb of bulkSizes) for(const st of topSizes){
+    if(sb>=st) continue;
+    const D=tierDemand(workloads[0],[sb,st]), Dmax=Math.max(D[0],D[1],1e-9);
+    for(const sc of [2,3,4,6,8,12,16,24]){
+      const n0=Math.max(1,Math.round(sc*D[0]/Dmax)), n1=Math.max(1,Math.round(sc*D[1]/Dmax));
+      candidates.push({sizes:[sb,st],counts:[n0,n1]});
+    }
+  }
+  const scoreOf=cfg=>{
+    let cost=0,fail=0,unsched=0,leftover=0,mk=0,nodes=0,oom=0,feasibleAll=true;
+    for(const w of workloads){ const r=evalConfig(cfg.sizes,cfg.counts,w);
+      cost+=r.cost; fail+=r.fail; unsched+=r.unsched; leftover+=r.leftover;
+      mk=Math.max(mk,r.makespan); nodes=Math.max(nodes,r.nodeCount); oom+=r.oom;
+      if(!r.feasible) feasibleAll=false; }
+    const n=workloads.length;
+    return {cfg,cost:cost/n,fail:fail/n,unsched,leftover,makespan:mk,nodes,oom:oom/n,feasible:feasibleAll};
+  };
+  const scored=candidates.map(scoreOf);
+  scored.sort((a,b)=>{ const fa=a.feasible?0:1, fb=b.feasible?0:1;
+    if(fa!==fb) return fa-fb;
+    if(!a.feasible && a.fail!==b.fail) return a.fail-b.fail;
+    return a.cost-b.cost; });
+  const best=scored[0];
+  const curScore=scoreOf({sizes:S.tierCfg.map(c=>c.ram),counts:S.tierCfg.map(c=>c.count)});
+  const oldDesc=S.tierCfg.map(c=>`${c.name} ${c.ram}GB×${c.count}`).join(', ');
+  S.tierCfg=best.cfg.sizes.map((s,i)=>({name:'T'+(i+1),ram:s,count:best.cfg.counts[i],
+    min:best.cfg.counts[i],max:best.cfg.counts[i],target:20}));
+  renderTierConfig(); buildCluster();
+  const bt=$('bTier'); if(bt) bt.value='0';
+  const tiersDesc=best.cfg.sizes.map((s,i)=>`T${i+1} ${s}GB×${best.cfg.counts[i]}`).join(' · ');
+  const mkTxt=fmtTime(best.makespan);
+  out.innerHTML=`<b style="color:var(--good)">${tiersDesc}</b> · ${best.nodes} node(s) · ~${mkTxt} · ${fmtMoney(best.cost)}`
+    +(best.fail>0.5?` · <span style="color:var(--bad)">~${Math.round(best.fail)} fail</span>`:'')
+    +`<br><span style="color:var(--muted)">was ${fmtMoney(curScore.cost)} · ${oldDesc||'—'}`
+    +(capped?' · ⚠ node too small for largest report':'')+`</span>`;
+  log(`⚙ auto-tune → ${tiersDesc} on ${best.nodes} node(s) · ~${mkTxt} · ${fmtMoney(best.cost)} (was ${fmtMoney(curScore.cost)})`,'g');
 }
 
 // ---------------------------------------------------------------- go
