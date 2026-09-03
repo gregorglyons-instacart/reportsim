@@ -171,6 +171,7 @@
     </div>
     <label class="mini" style="margin-top:5px;gap:5px">max tiers <input type="number" id="tuneTiers" min="1" max="3" step="1" value="2" style="width:46px"></label>
     <div class="hint" id="tuneOut">Solves for node size + tier sizes/counts to clear the configured burst under the target time, at least cost (reports entering tier 1).</div>
+    <button id="runAll" class="preset" style="margin-top:6px">▶ Tune + run all presets · ×1 &amp; ×2 tiers</button>
 
     <h2 style="margin-top:14px">Model</h2>
     <div class="ctl">
@@ -835,7 +836,8 @@ function initControls(){
   const pc=$('presets');
   PRESETS.forEach(p=>{ const b=document.createElement('button'); b.className='preset';
     b.textContent=p.name; b.onclick=()=>applyPreset(p); pc.appendChild(b); });
-  $('inject').onclick=injectBurst;
+  $('inject').onclick=()=>injectBurst();
+  $('runAll').onclick=runAllPresets;
   $('batches').onclick=e=>{
     const x=e.target.getAttribute('data-batch-x');
     if(x){ S.batches=S.batches.filter(b=>b.id!==+x); renderBatches(); }
@@ -874,14 +876,14 @@ function applyPreset(p){
   $('bTier').value=Math.min(p.tier,S.tiers.length-1);
 }
 // TEMP: per-batch memory histogram — equal-width 1GB bins
-function injectBurst(){
+function injectBurst(tag){
   const count=Math.round(+$('bCount').value);
   let mn=+$('bMin').value, mx=+$('bMax').value; if(mx<mn){[mn,mx]=[mx,mn];}
   const dist=$('bDist').value, durMode=$('bDur').value, fixedS=(+$('bDurFixed').value)*60;
   const ti=Math.min(+$('bTier').value||0, S.tiers.length-1);
   const nBins=Math.max(1,Math.floor(mx)+1);
   const buckets=new Array(nBins).fill(0);
-  const batch={id:++S.batchNo,t0:S.t,count,mn,mx,dist,durMode,tier:ti,
+  const batch={id:++S.batchNo,t0:S.t,count,mn,mx,dist,durMode,tier:ti,tag:(typeof tag==='string'?tag:null),
     done:0,failed:0,oom:0,first:null,last:null,sum:0,max:0,lastTier:null,buckets,cfg:clusterSnapshot()};
   S.batches.push(batch);
   for(let i=0;i<count;i++){
@@ -943,7 +945,7 @@ function renderBatches(){
     const el=document.createElement('div'); el.className='batch';
     el.innerHTML=`
       <button class="rm" data-batch-x="${b.id}" title="clear batch">×</button>
-      <div class="blabel">#${b.id} · ${b.count} rpts<br>
+      <div class="blabel">#${b.id} · ${b.count} rpts${b.tag?` · <span style="color:var(--warn)">${b.tag}</span>`:''}<br>
         <span style="color:var(--ink2);font-weight:400">${b.mn.toFixed(1)}–${b.mx.toFixed(1)}GB ${b.dist} → ${tName}</span></div>
       <div class="bstats">${BATCH_FIELDS.map(([l,k])=>`<div><span>${l}</span><b data-f="${k}">–</b></div>`).join('')}</div>
       <div class="bstats"><div><span>final tier</span><b data-f="finaltier">–</b></div></div>
@@ -1222,6 +1224,36 @@ function runAutoTune(){
         :(best.capped?' · <span style="color:var(--bad)">⚠ largest report won\'t fit any node</span>':''))
     +`<br><span style="color:var(--muted)">was ${fmtMoney(curScore.cost)} · ${oldDesc}</span>`;
   log(`⚙ auto-tune → ${nodeTxt} · ${tiersDesc} · ${best.nodes} node(s) · ~${mkTxt} · ${fmtMoney(best.cost)}${met?'':' ⚠ over target'} (was ${fmtMoney(curScore.cost)})`,met?'g':'w');
+}
+// ---------------------------------------------------------------- benchmark: tune+run every preset at 1 and 2 tiers
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function waitBatchDone(batch){
+  return new Promise(resolve=>{
+    const t0=Date.now();
+    const check=()=>{ if(!batch || batch.done+batch.failed>=batch.count || Date.now()-t0>180000) resolve();
+      else setTimeout(check,80); };
+    check();
+  });
+}
+async function runAllPresets(){
+  const btn=$('runAll'); if(btn.disabled) return;
+  btn.disabled=true; const orig=btn.textContent, savedTiers=$('tuneTiers').value;
+  $('autoTune').disabled=true; $('inject').disabled=true;
+  if(!S.running){ S.running=true; S.lastReal=0; const rb=$('run'); rb.textContent='⏸ Pause'; rb.className='stop'; }
+  try{
+    for(const maxTiers of [1,2]){
+      for(const p of PRESETS){
+        btn.textContent=`Running ${p.name} · T≤${maxTiers}…`;
+        await sleep(30);                       // let the label paint before the blocking search
+        applyPreset(p);
+        $('tuneTiers').value=maxTiers;
+        runAutoTune();
+        injectBurst(`${p.name} · ${maxTiers}-tier`);
+        await waitBatchDone(S.batches[S.batches.length-1]);
+      }
+    }
+  } finally { $('tuneTiers').value=savedTiers; btn.disabled=false; btn.textContent=orig;
+    $('autoTune').disabled=false; $('inject').disabled=false; }
 }
 
 // ---------------------------------------------------------------- go
